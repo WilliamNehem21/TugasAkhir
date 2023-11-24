@@ -1,0 +1,959 @@
+Artiﬁcial  Intelligence  in the Life Sciences  1 (2021) 100004 
+Contents  lists available  at ScienceDirect  
+Artiﬁcial  Intelligence  in the Life Sciences  
+journal  homepage:  www.elsevier.com/locate/ailsci  
+Quantifying  sources  of uncertainty  in drug  discovery  predictions  with  
+probabilistic  models  
+Stanley  E. Lazic a , ∗ , Dominic  P. Williams  b 
+a Prioris.ai Inc., 459–207 Bank Street, Ottawa, K2P 2N2, Canada 
+b Functional  and Mechanistic  Safety, Clinical Pharmacology  and Safety Sciences, AstraZeneca,  R&D, Cambridge  CB4 0WG, UK 
+a r t i c l e i n f o 
+Keywords:  
+Bayesian 
+Prediction  
+Probabilistic  machine learning 
+Toxicity 
+Uncertainty  quantiﬁcation  a b s t r a c t 
+Knowing  the uncertainty  in a prediction  is critical when making expensive  investment  decisions  and when patient 
+safety is paramount,  but machine  learning  (ML) models in drug discovery  typically  only provide a single best 
+estimate  and ignore all sources of uncertainty.  Predictions  from these models may therefore  be over-conﬁdent,  
+which can put patients  at risk and waste resources  when compounds  that are destined  to fail are further developed.  
+Probabilistic  predictive  models (PPMs) can incorporate  all sources of uncertainty  and they return a distribution  
+of predicted  values that represents  the uncertainty  in the prediction.  We describe  seven sources of uncertainty  
+in PPMs: data, distribution  function,  mean function,  variance  function,  link function(s),  parameters,  and hyper- 
+parameters.  We use toxicity prediction  as a running example,  but the same principles  apply for all prediction  
+models. The consequences  of ignoring  uncertainty  and how PPMs account for uncertainty  are also described.  We 
+aim to make the discussion  accessible  to a broad non-mathematical  audience.  Equations  are provided  to make 
+ideas concrete  for mathematical  readers (but can be skipped without loss of understanding)  and code is available  
+for computational  researchers  ( https://github.com/stanlazic/ML  _ uncertainty  _ quantiﬁcation  ). 
+1. Introduction  
+At each stage of the drug discovery  pipeline,  researchers  decide 
+to progress  or halt compounds  using both qualitative  judgements  and 
+quantitative  methods.  This is formally  a prediction  problem,  where, 
+given some information,  a prediction  is made about a future observ-  
+able outcome.  Standard  predictive  or machine  learning  models such as 
+random  forests,  support  vector machines,  or neural networks  only report 
+point-estimates,  or a single “best ”v a l u e  for a prediction;  they provide  
+no information  on the uncertainty  of the prediction.  Prediction  uncer- 
+tainty is important  when (1) the range of plausible  values is as impor- 
+tant as the best estimate,  (2) users need to know that the model cannot 
+conﬁdently  make a prediction,  (3) users need to reliability  distinguish  
+between  ranked items, or (4) the cost of an incorrect  decision  is large; 
+for example,  when making  expensive  investment  decisions  or when as- 
+sessing patient safety. 
+To illustrate  the importance  of prediction  uncertainty,  Fig. 1 shows 
+predicted  clinical  blood alanine  aminotransferase  (ALT) levels –an in- 
+dicator of liver toxicity  –for two hypothetical  compounds.  Assume  that 
+levels below 8 (arbitrary  units) are considered  safe, and that only one 
+compound  can be taken forward  for clinical  trials. Based only on the 
+best estimate,  compound  A (blue) is preferable  ( Fig. 1 A). Knowing  the 
+prediction  uncertainty  changes  the picture ( Fig. 1 B). 14% of compound  
+∗ Corresponding  author. 
+E-mail address: stan.lazic@cantab.net  (S.E. Lazic). A’s distribution  is in the unsafe shaded region, while only 2% of com- 
+pound B’s distribution  is in the unsafe region. Based on these distribu-  
+tions, compound  B maybe the better candidate  to progress  to clinical  
+trials; or a project team may decide to run more experiments  to reduce 
+compound  A’s uncertainty.  
+We deﬁne a probabilistic  predictive  model (PPM) as any machine  
+learning  model that returns a distribution  for the prediction  instead  of a 
+single value. PPMs diﬀer in how they represent  uncertainty.  At one end, 
+fully probabilistic  Bayesian  models specify a distribution  for the out- 
+come and for all unknown  parameters  in the model. These models are 
+the gold-standard  for quantifying  uncertainty  but they can be compu-  
+tationally  expensive.  At the other end are methods  that return multiple  
+predicted  values without  specifying  a probability  distribution.  Exam- 
+ples include  ﬁtting the same model on multiple  bootstrapped  datasets,  
+or for models with a stochastic  component,  ﬁtting the same model using 
+diﬀerent  random  number  generator  seeds [31] . Although  these models 
+are often computationally  tractable,  the connection  between  the dis- 
+tribution  of predicted  values and uncertainty  is unclear.  For example,  
+does varying  something  trivial such as the random  number  generator  
+seed adequately  capture  our uncertainty  in a prediction?  Between  these 
+extremes  are approaches  that try to obtain the beneﬁts  of fully proba- 
+bilistic models using approximations,  reformulations,  or computational  
+shortcuts.  For example,  instead  of using a fully Bayesian  deep neural 
+https://doi.org/10.1016/j.ailsci.2021.100004  
+Received  17 May 2021; Received  in revised form 24 May 2021; Accepted  25 May 2021 
+Available  online 26 May 2021 
+2667-3185/©2021  The Authors.  Published  by Elsevier B.V. This is an open access article under the CC BY-NC-ND  license 
+( http://creativecommons.org/licenses/by-nc-nd/4.0/  ) S.E. Lazic and D.P. Williams Artiﬁcial Intelligence in the Life Sciences 1 (2021) 100004 
+Fig. 1. Prediction  uncertainty.  Predicted  blood ALT levels for 
+two compounds,  with Compound  A appearing  better (A). Com- 
+pounds with values above the safety threshold  of 8 (grey 
+shaded region) will not be progressed.  Reporting  prediction  
+uncertainty  shows that 18% of Compound  A is above the 
+threshold  but only 2% of Compound  B, indicating  that Com- 
+pound B is better (B). ALT = alanine aminotransferase;  a.u. = 
+arbitrary  units. 
+network,  Kristiadi  et al. were able to obtain many of the beneﬁts  by 
+making  only the ﬁnal layer of the network  Bayesian  [29] . Also in the 
+neural network  literature,  Gal and Ghahramani  approximated  param- 
+eter uncertainty  by randomly  inactivating  nodes at prediction  time –a 
+procedure  known as Monte Carlo dropout  [15] , and Teye and colleagues  
+used the mean and variances  calculated  from batch normalisation  steps 
+for the same purpose  [63] . These approximate  methods  are an active 
+area of research  [3,27,46,70]  (see Mervin  et al., for a recent review 
+[40] ), and will be critical for making  PPMs more widely adopted,  but 
+here we focus on fully probabilistic  models as they better highlight  the 
+key areas of uncertainty.  
+All prediction  models can be written  as 
+𝑦 |𝑥 (1) 
+and read as “𝑦 given 𝑥 ”–where  𝑦 is the outcome  to be predicted  and 𝑥 
+are one or more variables  used to predict 𝑦 . Both 𝑥 and 𝑦 are available  
+when training  a model, and when a model is deployed,  new 𝑥 values 
+are observed  and used to predict the unknown  𝑦 ’s. PPMs additionally  
+provide  a probability  distribution  for 𝑦 , denoted  as 
+𝑃 ( 𝑦 |𝑥 ) (2) 
+and read as “the probability  of 𝑦 given 𝑥 ”. A distribution  for 𝑦 enables  
+us to calculate  any metric of interest,  such as the best guess for 𝑦 (e.g. 
+mean, median,  or mode), thereby  providing  the same information  as 
+standard  methods.  But in addition,  prediction  intervals  (PI) can be cal- 
+culated  around the best estimate,  or the probability  that 𝑦 is greater 
+or less than a predeﬁned  threshold  can be calculated,  as was done in 
+Fig. 1 B. 
+Below we describe  the sources  of uncertainty  and the advantages  
+of PPMs. We aim to make the discussion  accessible  to a broad non- 
+mathematical  audience.  Equations  are provided  to make ideas concrete  
+for mathematical  readers,  but can be skipped  without  loss of under- 
+standing  of the remaining  text. In addition,  code is provided  for com- 
+putational  researchers  ( https://github.com/stanlazic/ML  _ uncertainty  _ 
+quantiﬁcation  ) and implemented  in Julia using Turing [1,16] . 
+2. Sources  of uncertainty  
+The deﬁnition  of a probabilistic  model in Eq. (2) lacked a crucial 
+component,  which is the model itself: 
+𝑃 ( 𝑦 |𝑥, Model ) . (3) 
+The sources  of uncertainty  are now clear: they can reside in the data 
+( 𝑥 , 𝑦 ) or in the model. A prediction  for 𝑦 not only depends  on 𝑥 , but on 
+the model used to connect  𝑥 and 𝑦 . Hence, predictions  are conditional  on 
+a model, and uncertainty  in the model should lead to greater uncertainty  
+in the prediction.  Models  are composed  of the following  components,  
+which we discuss in greater detail below: 1. Data. The outcome  𝑦 and the predictor  or input variables  𝑥 . 
+2. Distribution  function.  The distribution  that represents  our uncer- 
+tainty in 𝑦 , also called the likelihood  or data generating  distribution:  
+𝐺( ⋅) . 
+3. Mean function.  The functional  or structural  form of the model de- 
+scribing  how 𝑦 changes  as 𝑥 changes:  𝑓 𝜇( ⋅) . 
+4. Variance  function.  Describes  how the uncertainty  in 𝑦 varies with 
+𝑥 : 𝑓 𝜎( ⋅) . 
+5. Parameters.  The unknown  coeﬃcients  or weights  for the mean ( 𝜃𝜇) 
+and variance  ( 𝜃𝜎) functions  that are estimated  from the data. 
+6. Hyperparameters.  Parameters  or other options  used to deﬁne a 
+model that are not estimated  from the data but ﬁxed or selected  
+by the analyst:  𝜙. 
+7. Link functions.  Nonlinear  transformations  of the mean ( 𝑙 𝜇( ⋅) ) 
+and/or variance  function  ( 𝑙 𝜎( ⋅) ) used to keep values within an al- 
+lowable  range. 
+Combining  these seven components  gives the generic  formulation  of 
+a PPM ( Eq. (4) ). Although  this equation  is abstract,  it captures  where 
+uncertainty  can reside. In this section we carefully  describe  the terms in 
+the equation  and then provide  a concrete  example.  
+𝑦 ∼𝐺( 𝜇, 𝜎) 
+𝜇= 𝑙 𝜇( 𝑓 𝜇( 𝑥 ; 𝜃𝜇)) 
+𝜎= 𝑙 𝜎( 𝑓 𝜎( 𝑥 ; 𝜃𝜎)) (4) 
+Starting  with the ﬁrst line of Eq. (4) , 𝑦 is a future value that we 
+want to predict and it could represent  a clinical  outcome,  an IC 50 value, 
+or a physicochemical  property  of a compound  such as solubility.  PPMs 
+require  that we specify a distribution  for our uncertainty  in 𝑦 , which we 
+can informally  think of as the distribution  from which 𝑦 was generated.  
+We denote this distribution  as 𝐺( ⋅) and the “( ⋅) ”notation  indicates  that 
+𝐺is a function  with inputs ( 𝜇and 𝜎in this case), but places the focus on 
+𝐺and not the inputs, thereby  reducing  clutter.  Common  distributions  
+include  the normal/Gaussian  (for continuous  symmetric  data), Student-  
+t (continuous  symmetric  data with outliers),  Bernoulli  (0/1 data), and 
+Poisson  (count data). The mean of the chosen distribution  is given by 
+𝜇and many distributions  have a second parameter,  𝜎, that controls  the 
+spread or width of the distribution.  This parameter  is critical for PPMs 
+because  it describes  the uncertainty  in 𝑦 . The ∼symbol  can be read 
+as “is distributed  as ”o r “is generated  from ”. To make this concrete,  
+we might represent  our uncertainty  in 𝑦 for a given compound  with a 
+Gaussian  distribution  that has a mean 𝜇= 2 . 45 –which  represents  our 
+best estimate  of 𝑦 –and a standard  deviation  of 𝜎= 2 . 1 . This would be 
+written  as 𝑦 ∼ Normal  (2 . 45 , 2 . 1) . 
+But where did our best estimate  𝜇come from? This is deﬁned  on the 
+second line of Eq. (4) . 𝑥 is the input data used to predict 𝑦 and it could 
+represent  compound  structures  (encoded  as a binary ﬁngerprint  for ex- 
+ample),  assay results,  or physicochemical  properties.  The prediction  task 
+2 S.E. Lazic and D.P. Williams Artiﬁcial Intelligence in the Life Sciences 1 (2021) 100004 
+reduces  to using 𝑥 to predict 𝑦 , but they need to be connected  through  a 
+statistical  or machine  learning  model. The structural  or functional  form 
+of this model is denoted  by 𝑓 𝜇( ⋅) and it could represent  the structure  of a 
+simple linear regression  model, the architecture  of a neural network,  an 
+ensemble  of trees, or a diﬀerential  equation  representing  a pharmacoki-  
+netic model. We refer to 𝑓 𝜇( ⋅) as the mean function  because  it tells us the 
+predicted  mean value of 𝑦 for a given value of 𝑥 . The mean function  con- 
+tains parameters  ( 𝜃𝜇) that are estimated  from the data, and the parame-  
+ters could represent  the coeﬃcients  of a linear model or the weights  and 
+biases of a neural network.  The “learning  ”in machine  learning  refers to 
+ﬁnding  parameter  values that maximise  predictive  performance,  given 
+the data and functional  form of the model. 𝜃𝜇usually  represents  mul- 
+tiple parameters  in the mean function;  for example,  it would represent  
+both the intercept  and slope in a simple regression  model. The subscript  
+𝜇on 𝑓and 𝜃indicates  that the function  and parameters  refer to the 
+mean, since we also have a function  and parameters  for the variance,  𝜎, 
+which we described  further below. 
+A potential  problem  is that 𝜇is unconstrained  and can be any value 
+calculated  from 𝑓 𝜇( ⋅) , which may lead to impossible  predictions.  For 
+example,  if we’re predicting  the probability  that a compound  is toxic, 
+𝑓 𝜇( ⋅) needs to be between  zero and one –v a l u e s  outside  this range do 
+not make sense. Hence, we need to transform  𝑓 𝜇( ⋅) with a link function  
+𝑙 𝜇( ⋅) to put it within a permissible  range. One option is to use the equa- 
+tion 1∕(1 + exp (− 𝑓 𝜇( ⋅))) as a link function,  which compresses  𝑓 𝜇( ⋅) into 
+the 0–1 range, but other functions  are also possible.  A link function  is 
+unnecessary  when no restriction  on 𝑓 𝜇( ⋅) is required,  and 𝑙 𝜇( ⋅) can be 
+dropped  from the formula.  (Useful  mnemonics:  𝑓= F unction;  𝐺= data 
+G enerating  distribution;  𝑙= L ink function;  with subscripts  𝜇and 𝜎re- 
+ferring to the mean and variance,  respectively).  
+The third line of Eq. (4) shows that the variance  or uncertainty  in 
+a predicted  value of 𝑦 can be speciﬁed  in the same way as we specify 
+the mean of 𝑦 . Many models assume  a constant  value for 𝜎, which is the 
+“homogeneity  of variance  ”assumption  in traditional  statistical  models.  
+However,  a model’s  uncertainty  in 𝑦 may vary for diﬀerent  values of 𝑥 , 
+which can be captured  with a variance  function  𝑓 𝜎( ⋅) . Since variances  are 
+positive,  a link function  for the variance  ( 𝑙 𝜎( ⋅) ) is needed  to constrain  𝜎to
+ be greater than zero. 
+Fully Bayesian  PPMs also require  us to specify the uncertainty  in the 
+parameters  𝜃𝜇and 𝜃𝜎before analysing  the data, and the hyperparam-  
+eters ( 𝜙) refer to this speciﬁcation.  Many of the approximate  methods  
+avoid this step and 𝜙may not correspond  to any part of the model, but 
+deﬁnes other options  for the learning  algorithm  and therefore  it is not 
+included  in Eq. (4) . 
+Usually  the 𝑥 and 𝑦 data are all we have, and we need to choose 𝐺, 
+𝑙 𝜇, 𝑓 𝜇, 𝑙 𝜎, 𝑓 𝜎, and 𝜙based  on background  knowledge,  preliminary  plots 
+of the data, or trying several options  and empirically  assessing  which is 
+best. For example,  an initial model might assume  that 𝐺is Gaussian  and 
+that 𝑓 𝜇follows  a hypothesised  mechanistic  relationship  based on a phar- 
+macokinetic  model. Then, we estimate  or learn the values of 𝜃𝜇based 
+on training  data, and assess the prediction  on a separate  test data set. 
+To make these ideas concrete,  Fig. 2 shows simulated  data for 100 com- 
+pounds,  where 𝑦 is a clinical  outcome  and 𝑥 is an assay result. Assume  
+that higher values of 𝑦 indicate  greater toxicity.  
+A nice feature of PPMs is that they are generative,  meaning  that they 
+can generate  or simulate  data. Indeed,  simulation  and learning  are oppo- 
+site sides of the same coin: learning  takes the ﬁxed data and infers likely 
+values of the parameters  that could have generated  the data, whereas  
+simulation  ﬁxes the parameters  and generates  the data. The model in 
+Eq. (5) generated  the data in Fig. 2 and we will use it as a running  
+example  throughout  
+𝑦 ∼ Normal  ( 𝜇, 𝜎) (5) 
+𝜇= 𝜃2 + 1 − 𝑒 − 𝜃1 𝑥 
+1 + 𝑒 − 𝜃1 𝑥 . 
+The ﬁrst line of the equation  is read as: “the outcome  𝑦 is generated  
+( ∼) from a Gaussian  or Normal  distribution  with a mean of 𝜇and a Fig. 2. Simulated  data with the true relationship  between  𝑥 and 𝑦 given by 𝜇= 
+𝑓 𝜇( 𝑥 ; 𝜃𝜇) (orange curve) and based on Eq. (5) . 𝐺is the Gaussian  data generating  
+distribution  with a mean 𝜇and a constant  variance  𝜎, which models the spread 
+of points around the line. Link functions  for 𝜇and 𝜎are not used and hence are 
+not shown. 
+standard  deviation  of 𝜎”. But how does 𝑦 depend  on 𝑥 ? The second line 
+shows how 𝑥 enters and how it depends  on two parameters:  𝜃1 and 𝜃2 
+( 𝑒 is a constant,  not a parameter).  We set this equation  equal to 𝜇and 
+can substitute  it for 𝜇in the ﬁrst line of Eq. (5) giving 
+𝑦 ∼ Normal  ( 
+𝜃2 + 1 − 𝑒 − 𝜃1 𝑥 
+1 + 𝑒 − 𝜃1 𝑥 𝜎) 
+. 
+Writing  the equation  in one line makes the relationship  between  𝑥 
+and 𝑦 clearer,  but multi-lined  equations  are easier to read with more 
+complex  models.  For most prediction  models the parameters  are unin- 
+teresting,  but to help interpret  the model, 𝜃2 is the 𝑦 -intercept  (value of 
+𝑦 when 𝑥 = 0 ), and 𝜃1 controls  how quickly  the line in Fig. 2 reaches  the 
+upper asymptote  as 𝑥 gets large. 
+To simulate  a value for 𝑦 , we need to (1) select parameter  values, and 
+we use the following:  𝜃1 = 3 . 25 , 𝜃2 = 0 . 2 , and 𝜎= 0 . 1 ; (2) select a value 
+of 𝑥 , which enables  us to calculate  𝜇; then (3) draw a random  number  
+from a Gaussian  distribution  with a mean of 𝜇and standard  deviation  of 
+𝜎. This can be repeated  any number  of times to obtain the 𝑃 ( 𝑦 |𝑥 ) distri- 
+bution,  and for diﬀerent  values of 𝑥 . The data in Fig. 2 were generated  
+for 100 𝑥 values uniformly  distributed  between  0 and 1. Note that 𝜃𝜇
+in Eq. (4) is a place-holder  for several variables,  which correspond  to 
+𝜃1 and 𝜃2 in Eq. (5) . Given this data, we now illustrate  were where the 
+seven sources  of uncertainty  enter. 
+2.1. Mean function  uncertainty  
+Uncertainty  in the mean function  𝑓 𝜇( ⋅) arises because  we rarely know 
+the true form of the relationship  between  𝑥 (assay) and 𝑦 (outcome)  –that
+ is, we don’t know the form of Eq. (5) . Uncertainty  in the mean 
+function  is also called model uncertainty,  but this term is ambiguous  
+because  models have multiple  components.  Choices  for the mean func- 
+tion include  which predictors,  interaction  terms, transformations,  basis 
+expansions,  hierarchies,  and time-varying  components  to include  in the 
+model. Assume  we only observe  the data in Fig. 2 , several models we 
+might consider  for the relationship  between  𝑥 and 𝑦 are: 
+Linear ∶ 𝑦 = 𝜃0 + 𝜃1 𝑥 
+Quadratic  ∶ 𝑦 = 𝜃0 + 𝜃1 𝑥 + 𝜃2 𝑥 2 
+2 Paramet  er Exponent  ial ∶ 𝑦 = 𝜃2 (1 − 𝑒 − 𝜃1 𝑥 ) 
+3 Paramet  er Exponent  ial ∶ 𝑦 = 𝜃3 + 𝜃2 (1 − 𝑒 − 𝜃1 𝑥 ) 
+Michaelis  − Menten ∶ 𝑦 = 𝜃1 𝑥 ∕ ( 𝜃2 + 𝑥 ) . 
+3 S.E. Lazic and D.P. Williams Artiﬁcial Intelligence in the Life Sciences 1 (2021) 100004 
+Fig. 3. Model averaging.  Three models ﬁt the data well (A-C), even though none are the true model. They make diﬀerent  predictions  at low assay values and when 
+extrapolating  to higher values. The mean predictions  are superimposed  for easier comparison  (D). Model averaged  prediction  (E). Comparison  of prediction  interval 
+widths (F). Shaded regions are the 95% prediction  intervals.  
+None of these are the true model ( Eq. (5) ), but except for the linear 
+model, they all saturate  at high values of 𝑥 or are concave  and there- 
+fore capture  the main trend in the data. Which model should we use? 
+Typically,  only a single model is selected  and predictions  are made from 
+that. If one model is clearly better than the others, there may be little 
+lost by using one model for predictions.  However,  if two or more models 
+ﬁt the data equally  well, making  predictions  from only one will under- 
+estimate  the prediction  uncertainty.  Fortunately,  we are not forced to 
+choose one model but can ﬁt several and combine  their predictions.  
+To illustrate,  we will use the quadratic,  2-parameter  exponential,  and 
+3-parameter  exponential  models.  The three models are ﬁt to the data 
+( Fig. 3 A–C) and predictions  are extrapolated  to show both how similar 
+the ﬁts are where there is data, and how diﬀerent  the ﬁts are when ex- 
+trapolating.  The shaded regions  show the 95% prediction  intervals  (PI), 
+and if a model is suitable,  we expect 95% of the data to fall in the shaded 
+region. 
+To better compare  the predictions,  the mean functions  𝜇for three 
+models are plotted together  in Fig. 3 D. The models make similar pre- 
+dictions  within the range of the data, except at very low values of 
+𝑥 , where the 2-parameter  exponential  model predicts  smaller  values. 
+Fig. 3 E shows the model-averaged  prediction,  and note how uncertainty  
+is greater at high values of 𝑥 , where the models make diﬀerent  predic- 
+tions. To better appreciate  how model averaging  incorporates  uncer- 
+tainty, Fig. 3 F shows the width of the 95% PI for the three models and 
+the averaged  model. Note how the averaged  model has a wider PI at 
+low values of 𝑥 than any of the original  models.  This occurs because  the 
+three models make diﬀerent  predictions  at low values and hence this 
+region is more uncertain.  For intermediate  values of 𝑥 , all three mod- 
+els make similar predictions  and the averaged  PI is wider than some 
+models and lower than others. When extrapolating  to larger values of 
+𝑥 , the model averaged  PI width quickly  becomes  the widest,  reﬂecting  
+both the diverging  predictions  of the individual  models and the greater 
+uncertainty  in the quadratic  model. Predictions  are always conditional  on a model, and if we don’t know 
+the true model, predictions  from the wrong model are likely to be over- 
+conﬁdent.  We extrapolated  well beyond  the data to illustrate  how model 
+averaging  accounts  for model uncertainty.  Such extrapolation  may seem 
+unrealistic,  but the message  is that whenever  models make diﬀerent  pre- 
+dictions  for the same values of 𝑥 , the uncertainty  in the model-speciﬁc  
+predictions  will be overconﬁdent,  as we see to a lesser degree for low 
+values of the assay. 
+2.2. Parameter  uncertainty  
+Most predictive  models have parameters  or weights  that are learned  
+from the data and control how the predictor  variables  ( 𝑥 ) are related 
+to the outcome  variable  ( 𝑦 ) –these parameters  are the 𝜃symbols  in the 
+ﬁve models considered  above. Most machine  learning  methods  only use 
+the single best value of each parameter  when making  a prediction.  But 
+since the parameters  are learned  from the data, they are uncertain,  and 
+this uncertainty  should be propagated  into the prediction.  Parameter  
+uncertainty  decreases  as the sample sizes increases,  so to better illustrate  
+the eﬀect of parameter  uncertainty  on predictions,  a smaller  dataset was 
+made by taking every eighth data point from the previous  example.  
+Fig. 4 uses the quadratic  model, which has four parameters  
+( 𝜃0 , 𝜃1 , 𝜃2 , 𝜎). The grey shaded region shows the 95% prediction  inter- 
+val from a Bayesian  model that accounts  for parameter  uncertainty.  The 
+dashed black lines show the 95% PI from a classic quadratic  regres- 
+sion model which ignores  parameter  uncertainty,  and note how they are 
+slightly  narrower.  The mean function  is identical  for both the Bayesian  
+and classic model. 
+The diﬀerence  in PI width may seem negligible  when focusing  on 
+the mean prediction,  but ignoring  parameter  uncertainty  gives approx-  
+imately  7% narrower  PIs. This may be important  with “point of depar- 
+ture ”calculations  when the tails of the distributions  are more important  
+than the means [50] . Assume  clinical  outcomes  above 1.2 are considered  
+4 S.E. Lazic and D.P. Williams Artiﬁcial Intelligence in the Life Sciences 1 (2021) 100004 
+Fig. 4. Parameter  uncertainty.  The grey shaded region is the 95% prediction  
+interval for a Bayesian  model and the narrower  black dashed lines for a classical  
+model. The classic interval is narrower  because it doesn’t account for parameter  
+uncertainty.  
+problematic  and the assay result for one compound  is 𝑥 = 0 . 5 . When fully 
+accounting  for parameter  uncertainty,  there is a 5.9% chance that the 
+true value of the clinical  outcome  is above 1.2, versus a 4.3% chance 
+when ignoring  uncertainty.  The ratio of these numbers  is 1.37, indi- 
+cating that the tail area is nearly 1.4 times larger when accounting  for 
+uncertainty.  
+Models  typically  have many more parameters  than this example  
+(the state-of-the-art  Generative  Pre-trained  Transformer  3 (GPT-3)  deep 
+learning  language  model has 175 billion parameters  [6] ) and simply 
+collecting  more data is often not an option to reduce parameter  uncer- 
+tainty because  more data enables  more complex  models to be ﬁt (e.g. 
+including  nonlinear  terms and interactions),  which then increases  the 
+number  of parameters.  
+2.3. Hyperparameter  uncertainty  
+Hyperparameters  are a diverse  set of tunable  options  that aﬀect the 
+training  and predictions.  Unlike parameters,  they are not estimated  from 
+the data but selected  by the analyst;  examples  include  the amount  of 
+regularisation  in a lasso model, the number  of trees in a random  forest 
+model, or the cost function  in a support  vector machine.  Suitable  val- 
+ues are typically  found by trying several options  and selecting  the best 
+using crossvalidation.  In the hyperparameter  category  we can also in- 
+clude options  that are rarely part of a formal selection  process  such as 
+the choice of optimisation  algorithm  or random  number  seed for mod- 
+els with a stochastic  component.  For fully Bayesian  models we can also 
+include  parameters  for prior distributions,  which are not updated  by the 
+data. These hyperparameters  are selected  pragmatically  to provide  good 
+predictions,  but other sets of hyperparameter  values might give equally  
+good predictions,  on average,  but slightly  diﬀerent  predictions  for each 
+test compound.  Hence, uncertainty  in hyperparameter  values is rarely 
+taken into account.  A further complication  is that most hyperparame-  
+ters are not related to any biological  or chemical  quantity  of interest  and 
+hence it is unclear  what the uncertainty  is actually  about. Nevertheless,  
+Lakshminarayanan  and colleagues  showed  that by running  many mod- 
+els with a diﬀerent  random  seed, the ensemble  of predictions  performed  
+better than a single model, and the distribution  of predicted  values pro- 
+vided a measure  of uncertainty  [31] . 
+2.4. Data uncertainty  
+One of the main sources  of uncertainty  –and which is almost univer-  
+sally ignored  –is the uncertainty  in the data, both in the predictors  ( 𝑥 ) and in the outcome  to be predicted  ( 𝑦 ). The uncertainty  can be in the 
+training  data used to build the model, in the new data to be predicted,  
+or both. The main sources  of data uncertainty  are measurement  error, 
+misclassiﬁcation  error, binning,  censoring  and truncation,  and missing  
+values. Each of these are discussed  below. 
+Predictors  are often experimental  measurements  and are therefore  
+subject to measurement  error, or they are samples  from a larger pop- 
+ulation and are therefore  subject to sampling  error (e.g. only cells in 
+the ﬁeld of view are measured,  not all cells in a well, and if a diﬀer- 
+ent subset of cells were selected,  a diﬀernt  measured  value would be 
+obtained).  Predictors  may also be calculated  quantities  such as IC 50 val- 
+ues estimated  from dose-response  or concentration-response  curves, and 
+hence are uncertain.  Furthermore,  some predictors  such as cLogP are 
+the output of other (imperfect)  prediction  models and therefore  are also 
+uncertain.  Finally,  some predictors  are not measured  directly  but are es- 
+timated  from a standard  curve, which introduces  additional  uncertainty  
+because  the curves may not be not perfectly  calibrated.  
+All these are examples  of classic measurement  error, deﬁned  as 
+𝑥 measured = 𝑥 true + error , where the measured  𝑥 value is the true value 
+corrupted  by some error or noise. Errors can also be multiplicative,  
+where 𝑥 measured = 𝑥 true ×error . Another  type of error is Berkson  error, 
+where samples  or experimental  units are assumed  to have the same ex- 
+posure but actually  diﬀer. For example,  several wells in a microtitre  
+plate are given the same concentration  of a compound,  but the true 
+concentration  may diﬀer due to variations  in the amount  of compound  
+dispensed,  or, wells on the edge of a plate may have greater evapora-  
+tion of the solution  and thus have a higher eﬀective  concentration  of the 
+compound.  Compound  toxicity  classiﬁcations  can also introduce  Berk- 
+son error. A compound  may be classiﬁed  as “severely  ”hepatotoxic,  even 
+though most people tolerate  the compound  well and only a few expe- 
+rience severe reactions.  The class label is therefore  deﬁned  by a few 
+members  of the class instead  of the majority  response.  
+Berkson  error can be introduced  when converting  continuous  values 
+into bins or groups.  For example,  compounds  are categorised  as active 
+versus inactive,  despite having a range of activity  values. Or, compounds  
+are classiﬁed  as having no, mild, or severe toxicity,  even though com- 
+pounds  will have a range of toxicity  levels within each category.  Binning  
+can also lead to misclassiﬁcation  error, where a compound  is placed into 
+the incorrect  category.  This can occur if the measured  assay value dif- 
+fered from the true value and fell on the wrong side of a threshold.  
+Hence, binning  is strongly  discouraged  [33,35]  . Misclassiﬁcation  can 
+also occur due to incorrect  diagnoses,  labelling  errors, or data-entry  er- 
+rors. The standard  response  to these known and often large sources  of 
+data uncertainty  is to ignore them and assume  that 𝑥 measured = 𝑥 true . 
+Ignoring  error in 𝑥 can bias parameter  estimates,  but for prediction  
+models the parameters  are usually  not of interest.  Even though noisy 
+data can lead to biased parameter  estimates,  the model is still consis- 
+tent for the prediction,  meaning  that as the sample size increases,  the 
+prediction  will be correct,  on average  [9,20] . This likely explains  why 
+error in 𝑥 has received  little attention  in the predictive  modelling  and 
+machine  learning  literature.  However,  if we’re interested  in the uncer- 
+tainty in the prediction,  then making  good predictions  on average  is 
+not good enough,  we need to ensure that the prediction  uncertainty  is 
+calibrated.  
+Data are censored  when they are known only up to a boundary  value, 
+but not beyond,  and therefore  only partial information  is available.  For 
+example,  assays typically  have upper and lower limits of detection  (LoD) 
+and uncertainty  arises because  the exact value is unknown,  but the LoD 
+is typically  treated as the “true ”measured  value. 
+Data are truncated  when values outside  of a range are omitted,  and 
+the number  of omitted  values is unknown.  For example,  for objects to 
+be segmented  as a cell in a standard  image analysis,  they must have a 
+minimum  user-deﬁned  cell size. Smaller  cells will therefore  not be in- 
+cluded in the analysis,  and hence both the estimated  cell size and prop- 
+erties that are correlated  with cell size can diﬀer from their true values, 
+thereby  introducing  both uncertainty  and bias. 
+5 S.E. Lazic and D.P. Williams Artiﬁcial Intelligence in the Life Sciences 1 (2021) 100004 
+Fig. 5. Data uncertainty.  Error bars indicate  1 
+standard  error of the estimated  assay value and 
+clinical outcome  (A). The red point at 𝑥 = 0 . 15 
+is the new value to be predicted.  Predictions  
+are more uncertain  when measurement  error in 
+the test data is included  (assuming  the training  
+data is measured  without error; B). Predictions  
+for the test data when accounting  for measure-  
+ment error in the training  data using multiple  
+generated  data (assuming  no error in the test 
+data; C). Averaged  predictions  from the gener- 
+ated data shows greater prediction  uncertainty  
+compared  with ignoring  measurement  error in 
+the training  data (D). (For interpretation  of the 
+references  to color in this ﬁgure legend, the 
+reader is referred  to the web version of this ar- 
+ticle.) 
+Missing  data is the ﬁnal source of data uncertainty  and can arise for 
+many reasons.  Imputation  is a common  approach  to deal with missing  
+data, where a plausible  value is generated  and substituted  for the miss- 
+ing value. The imputed  value is then taken as the true value, ignoring  
+that it was generated  and not measured.  A simple way to account  for un- 
+certainty  in an imputed  value is to impute many values –known  as mul- 
+tiple imputation  –and the variation  in the imputed  values captures  the 
+uncertainty  [37,65]  . Predictions  are the made for each imputed  value 
+and the predictions  combined.  
+To illustrate  data uncertainty,  Fig. 5 A shows the same simulated  data 
+but with uncertainty  in both the predictor  and outcome  variable.  Here 
+we assume  that the error in 𝑥 diﬀers for each sample because  it depends  
+on the precision  of the measurement,  whereas  the uncertainty  in 𝑦 is 
+constant;  for example,  we know that the measurements  are accurate  to 
+± some ﬁxed amount.  Variable  and ﬁxed uncertainty  are accounted  for 
+in the same way, and we include  both for illustration  purposes.  
+The uncertainty  in 𝑥 and 𝑦 can be handled  in two ways. The ﬁrst is 
+to directly  model the errors in a Bayesian  analysis  [20,39,41,51]  . For 
+example,  if 𝑥 is measured  with error, the true value can be inferred  
+with 𝑥 measured ∼ Normal  ( 𝑥 true , 𝜎error ) where 𝜎error is the uncertainty  in the 
+measured  value of 𝑥 –usually  the standard  error. However,  ﬁtting such 
+models may be diﬃcult  as each sample (row) adds as many parameters  
+as there are variables  with measurement  error (columns).  
+A second simpler  option is to generate  multiple  data sets, where the 𝑥 
+and 𝑦 values are drawn from a distribution  [2] . For example,  suppose  an 
+𝑥 variable  for one compound  has a measured  value of 0.5 with a standard  
+error of ±0 . 06 . We can sample,  say, 10 values from a normal  distribution  
+with a mean of 0.5 and a standard  deviation  of 0.06, thereby  generat-  
+ing 10 new datasets  where the observed  value of 𝑥 is replaced  with the 
+generated  value. This is a form of multiple  imputation  and Blackwell,  
+Honaker,  and King describe  a more sophisticated  method  of generat-  
+ing new data by taking the correlations  between  variables  into account  
+[2] . Each dataset is then analysed  separately,  and the predictions  from 
+each analysis  are combined.  Variations  between  the diﬀerent  datasets  
+will lead to diﬀerent  parameter  estimates,  which in turn will lead to diﬀerent  predictions,  and the ensemble  of predictions  captures  the un- 
+certainty  in 𝑥 . The models can be ﬁt to the separate  datasets  in parallel,  
+and so the computation  time is the same as ﬁtting the model to one 
+dataset.  
+We use the second method  to illustrate  the eﬀect of ignoring  mea- 
+surement  error in two ways. First, we assume  the training  data is mea- 
+sured without  error, but the test data is measured  with error. Then we 
+assume  that the training  data is measured  with error but the test data 
+is not. In both cases we compare  the result to the standard  approach  of 
+ignoring  measurement  error in both the training  and test data. The test 
+data is a single new compound  with an assay value of 𝑥 = 0 . 15 ± 0 . 06 , 
+shown as the red point in Fig. 5 A (plotted  at 𝑦 = 0 , but the objective  is 
+to predict 𝑦 ). The 3-parameter  exponential  model is used in this exam- 
+ple. The narrow  blue distribution  in Fig. 5 B corresponds  to the standard  
+approach  of ignoring  uncertainty  in both the training  and test data, and 
+the red distribution  shows the greater uncertainty  in the prediction  for 
+𝑦 when the measurement  error in 𝑥 is included.  To obtain this distribu-  
+tion, 1000 samples  were drawn from a normal  distribution  with a mean 
+of 0.15 and standard  deviation  of 0.06. A prediction  was made for each 
+of these 1000 samples  which reﬂects  the uncertainty  in 𝑥 . 
+The blue distribution  in Fig. 5 C is again the standard  analysis,  and 
+the ﬁve red lines show the slightly  diﬀerent  predictions  from each of 
+the ﬁve datasets  that account  for measurement  error in the training  
+data (the test data was assumed  to be error-free).  Predictions  from the 
+ﬁve datasets  are averaged  and shown as the red distribution  in Fig. 5 D, 
+which is slightly  wider than the standard  analysis  from the blue distribu-  
+tion. The additional  uncertainty  appears  negligible  in this example,  es- 
+pecially  compared  with uncertainty  in the test data ( Fig. 5 B). However,  
+the variation  between  datasets  is expected  to increase  with (1) greater 
+uncertainty  in the variables,  (2) more variables  with measurement  error 
+included  in the model, and (3) more parameters  in the model with the 
+total sample size remaining  ﬁxed. The eﬀect of measurement  error in 
+the training  data can be assessed  during model development  and vali- 
+dation, and if the additional  prediction  uncertainty  is negligible,  then 
+the ﬁnal production  model might ignore it. 
+6 S.E. Lazic and D.P. Williams Artiﬁcial Intelligence in the Life Sciences 1 (2021) 100004 
+Fig. 6. Truncated  predictive  distributions.  Fits 
+and 95% PI for models without (A and C) and 
+with (B and D) a constraint  that the predicted  
+values must be positive.  Prediction  for a new 
+compound  given 𝑥 = 0 . 5 without the constraint  
+shows that 9.1% of the predicted  distribution  is 
+negative  (C), while the truncated  model redis- 
+tributes the prediction  to positive values (D). 
+Red dashed lines are the data boundary.  
+2.5. Distribution  function  uncertainty  
+Another  source of uncertainty  is the distribution  function  𝐺( ⋅) , which 
+represents  our uncertainty  in a predicted  value of 𝑦 . Dozens  of distribu-  
+tions are available  but the list can be narrowed  down based on back- 
+ground  knowledge  of the outcome.  For example,  if the outcome  is bi- 
+nary such as absent/present,  safe/toxic,  or alive/dead,  then a Bernoulli  
+distribution  is appropriate;  if the outcome  is a count such as the num- 
+ber of seizures,  then a Poisson  or negative  binomial  distribution  are two 
+common  options;  if the data are positive  values and skewed  such as liver 
+enzyme  levels, then a log-normal  or gamma  distribution  may be suitable;  
+if the outcome  is an ordered  category  such as none/mild/severe,  then an 
+ordered  categorical  distribution  would be appropriate;  if the outcome  is 
+continuous  and unbounded  with no outliers,  then a Gaussian  distribu-  
+tion may be suitable;  and if there are outliers,  a Student-t  distribution  
+might be appropriate.  Many Bayesian  textbooks  have appendices  that 
+list the common  distributions  and their properties  [18,36,38]  . 
+Choosing  between  distributions  is made easier because  many distri- 
+butions  are special cases of other distributions.  For example,  both the 
+Gaussian  and Cauchy  distributions  are special cases of the Student-t  dis- 
+tribution,  the Poisson  distribution  is a special case of the negative  bino- 
+mial distribution,  and the exponential  distribution  is a special case of 
+a gamma  distribution.  Hence, we often don’t need to choose between  a 
+set mutually  exclusive  options,  but can select the more general  distri- 
+bution and allow the model to determine  if one of the special cases is 
+more appropriate.  The more general  distributions  usually  have only one 
+additional  parameter  and therefore  do not make the model much more 
+complex.  However,  not all potentially  suitable  distributions  are related 
+(e.g. gamma  and lognormal)  and hence two or more models may need 
+to be compared.  The data for our running  example  was generated  from 
+a Gaussian  distribution  and which we have been using for all the mod- 
+els throughout.  Hence using the more general  Student-t  distribution  will 
+inform us that the Gaussian  is suitable,  and so the results are not shown. 
+A key consideration  when selecting  a distribution  function  is the 
+bounds  of the data. In our running  example,  the clinical  outcome  has a minimum  value of zero, but is being modelled  with a Gaussian  dis- 
+tribution.  Since a Gaussian  distribution  is deﬁned  for both positive  and 
+negative  numbers,  there is nothing  to prevent  negative  predictions.  A 
+model is clearly inappropriate  if it predicts  impossible  values. Fortu- 
+nately, we can easily deﬁne truncated  versions  of standard  distributions,  
+and so we could specify a Gaussian  distribution  with a lower bound of 
+zero. Fig. 6 shows an example  using the 2-parameter  exponential  model 
+to predict the clinical  outcome  for an assay value of 𝑥 = 0 . 05 both with- 
+out (A) and with (B) truncation  at 𝑦 = 0 . Without  truncation  the model 
+gives 9% chance that 𝑦 will be less than zero ( Fig. 6 C). With truncation,  
+this probability  gets redistributed  to positive  values ( Fig. 6 D, the small 
+proportion  of the distribution  below zero is a plotting  artefact).  Hence, 
+if training  or test data are near boundaries,  using truncated  versions  of 
+standard  distributions  is sensible.  However,  if the data are bounded  but 
+the values are far from the boundaries,  then accounting  for such bound- 
+aries may be unnecessary.  
+2.6. Link function  uncertainty  
+Link functions  are required  when the predicted  mean 𝜇= 𝑓 𝜇( ⋅) is 
+bounded  by an upper and/or lower limit. For example,  when predicting  
+the probability  of an event, the predicted  value must lie between  0 and 
+1. Values returned  from the mean function  are unconstrained  and can 
+lie well outside  this range. Hence, a link function  is used to transform  
+the values to respect the bounds.  The logit, probit, cauchit,  and comple-  
+mentary  log-log functions  all take unconstrained  numbers  and compress  
+them into the 0–1 range ( Fig. 7 ). There is no “correct  ”link function  and 
+each provides  a diﬀerent  mapping  from the unconstrained  input to the 
+constrained  output and hence gives a diﬀerent  prediction,  especially  for 
+large values of the input. Link functions  are also required  for the vari- 
+ances, since variances  cannot be negative  values, and exponential  or 
+power links are often used. 
+Link functions  are analogous  to activation  functions  in neural net- 
+works, although  they are used as nonlinear  transformations  between  
+neurons  and not necessarily  to constrain  values to allowable  ranges.  But 
+7 S.E. Lazic and D.P. Williams Artiﬁcial Intelligence in the Life Sciences 1 (2021) 100004 
+Fig. 7. Link function  uncertainty.  Four functions  that map the mean function  
+𝜇= 𝑓( ⋅) from −∞to ∞to values between  0 and 1. These link functions  are 
+required  when the outcome  is a probability  and must be between  0 and 1. The 
+predicted  probabilities  therefore  diﬀer depending  on the link function.  
+the same issue arises in that many activation  functions  exist and diﬀer- 
+ent functions  will lead to diﬀerent  predictions.  
+2.7. Variance  function  uncertainty  
+The variance  function  models the uncertainty  in 𝑦 for given values 
+of 𝑥 . Another  way to think of a variance  function  is that it models the 
+spread of points around the mean prediction  ( Fig. 8 ). The standard  ap- 
+proach assumes  that uncertainty  in 𝑦 is constant  ( Fig. 8 A). However,  
+when the variance  is not constant,  a model for 𝜎is required  ( Fig. 8 B). 
+Just like modelling  𝜇as a function  of 𝑥 , we now need to model 𝜎as a 
+function  of 𝑥 . This function  could be a simple function  of one 𝑥 vari- 
+able or a full neural network  for all 𝑥 variables  [44] . The latter option 
+involves  creating  a second neural network  for the variance,  but this dou- 
+bles the complexity  of the model and the training  time. 
+In Fig. 8 B we do not use 𝑥 directly,  but model 𝜎as a function  of 𝜇–i n
+ other words, the uncertainty  in 𝑦 is proportional  to the predicted  
+value of 𝑦 . This allows for a simple mean function  such as 𝑓 𝜎= 𝜎0 + 𝜎1 𝜇, 
+where 𝜎0 and 𝜎1 are parameters  that control the relationship  between  𝜎and
+ 𝜇. Since variances  must be positive  values, a link function  is needed  
+to constrain  𝑓 𝜎, and the softplus  function  𝑙 𝜎= log (1 + exp ( 𝑓 𝜎( ⋅)) is used 
+here. The result is shown in Fig. 8 B, where the 95% shaded prediction  
+region better matches  the spread of the data compared  with assuming  a 
+constant  variance  ( Fig. 8 A). 
+Instead  of using a variance  function,  another  option is to transform  
+the outcome  variable  (e.g. log, square-root,  or inverse),  so that the un- 
+certainty  in 𝑦 is constant.  Alternatively,  some distributions  such as the 
+Poisson  and Bernoulli  have a deﬁned  relationship  between  the variance  
+the mean, which allows for non-constant  variances,  but they are only 
+appropriate  for certain type of data. 
+3. Sources  of uncertainty  combined  
+Breaking  down the sources  of uncertainty  into seven items enables  
+us to think about them separately  and assess their importance  when de- 
+veloping  a prediction  model. A ﬁnal model may include  several sources  
+and they can be easily combined.  For example,  suppose  variance  and 
+link functions  were not required  but two mean functions  and two dis- 
+tribution  functions  performed  similarly  and therefore  four models with 
+each combination  of distribution  and mean function  are ﬁt to the train- 
+ing data and the predictions  averaged.  If fully Bayesian  models are used, parameter  uncertainty  is already  account  for. And if the test data are 
+measured  with error, we can use the approach  in 5 B to draw multiple  
+samples  for each test sample and feed them all through  the prediction  
+models.  The more sources  of uncertainty  accounted  for the more com- 
+plex the prediction  model. Hence, sources  of uncertainty  that make little 
+contribution  to the overall prediction  uncertainty  can be ignored.  
+4. Model ﬁtting 
+A generic  Bayesian  2-parameter  exponential  model is shown below, 
+and each subsection  above modiﬁed  this basic model in diﬀerent  ways 
+to highlight  the sources  of uncertainty.  
+𝑦 ∼ Normal  ( 𝜇, 𝜎) Dist ribut ion funct ion 
+𝜇= 𝜃2 (1 − 𝑒 − 𝜃1 𝑥 ) Mean function  
+𝜃1 ∼ Truncated  Normal (1 , 5) Priors 
+𝜃2 ∼ Truncated  Normal (0 , 5) 
+𝜎∼ Truncated  Normal (0 , 5) 
+𝑦 is modelled  a Normal  distribution  with a mean 𝜇and standard  de- 
+viation 𝜎. The second line deﬁnes the mean function,  and there is no 
+variance  or link function  deﬁned.  The next three lines specify the prior 
+distributions  for the three parameters  in the model. Given the mean 
+function,  we know that 𝜃1 and 𝜃2 are positive,  and so is 𝜎, by deﬁni- 
+tion. Hence, we use truncated  normal  distributions  with a lower limit of 
+truncation  at zero to represent  our prior uncertainty  in the parameters.  
+All the models were ﬁt to the data with the Turing package  in Julia. 
+The No-U-Turn  Sampler  (NUTS)  was used to update the uncertainty  in 
+the parameters  after conditioning  on the data. Three chains with 10,000 
+samples  each were used and convergence  was assessed  with graphical  
+and numeric  summaries  (trace plots and ̂𝑅 statistics).  Predictions  were 
+then generated  for new values of 𝑥 by (1) drawing  samples  from the 
+updated  parameter  distributions,  (2) using these to calculate  𝜇, and (3) 
+using 𝜇and 𝜎to generate  values for 𝑦 . Finally,  any summary  statistic  can 
+be calculated,  such as the proportion  of samples  from 𝑦 that are greater 
+than a threshold  value. 
+5. Uncertainty  for classiﬁcation  tasks 
+The previous  examples  had a continuous  outcome  variable,  but often 
+outcomes  are categorical  such as toxic versus safe. Much of the previous  
+discussion  applies,  but an important  distinction  is between  uncertainty  
+in a parameter  ( 𝜇) and uncertainty  in a prediction  for a new observable  
+( 𝑦 ) [5,17] . Greater  parameter  uncertainty  leads to greater prediction  
+uncertainty,  but not for classiﬁcation  tasks, where the objective  is to 
+predict which of 𝐾classes  a sample belongs  to. This point is illustrated  
+in Fig. 9 . 
+Fig. 9 A plots data for a 2-group  classiﬁcation  task with two predic- 
+tors ( 𝑥 1 , 𝑥 2 ), and assume  the grey triangles  are the “toxic ”class and the 
+blue circles are the “safe ” class.  The black line is the optimal  separat-  
+ing boundary.  A logistic  regression  model is used to separate  the classes 
+and the prediction  from the model will be a number  between  0 and 1, 
+where 1 corresponds  toxic and zero corresponds  to safe. This prediction  
+is derived  from the mean function  and is passed through  a link func- 
+tion to constrain  the predictions  to lie between  0 and 1. We’ll call these 
+predicted  values 𝜇and the uncertainty  in the prediction  𝜎. Fig. 9 B plots 
+𝜇versus  𝜎for each point in Fig. 9 A, and the inverted-U  relationship  is 
+a known feature of such models.  But some samples  are especially  un- 
+certain and are highlighted  in red ( 𝜎≥ 0 . 8 ). Samples  with intermediate  
+uncertainty  ( 𝜎between  0.6 and 0.8) are highlighted  in orange.  Fig. 9 C 
+shows that the uncertain  samples  are all close to the decision  bound- 
+ary, and that the most uncertain  red points lie near the edge of the data 
+where the location  of decision  boundary  itself is uncertain.  The shaded 
+grey region in Fig. 9 C represents  the uncertainty  in the decision  bound- 
+ary, and note how the uncertainty  is wider at the ends compared  with 
+the middle.  
+8 S.E. Lazic and D.P. Williams Artiﬁcial Intelligence in the Life Sciences 1 (2021) 100004 
+Fig. 8. Variance  function  uncertainty.  A con- 
+stant variance  implies that the uncertainty  in a 
+prediction  is the same for all values 𝑥 (A). How- 
+ever, just like the mean prediction  can change 
+as function  of 𝑥 , so can the uncertainty  in the 
+prediction  (B). 
+Fig. 9. Uncertainty  in classiﬁcation.  Simulated  data with two features  (A). A plot of the mean ( 𝜇) and uncertainty  ( 𝜎) shows the expected  inverted-U  relationship  
+(B). The highest variance  predictions  (red points) are near the decision  boundary  and at the edge of the data, and high variance  predictions  (orange points) follow 
+the boundary  (C). Two compounds  with the same mean but diﬀerent  uncertainties  (D), have the same uncertainty  in the ﬁnal predicted  value for 𝑦 (E,F). Outcome  
+uncertainty  is largely explained  by 𝜇(G) and is similar for the two compounds  (H). Parameter  uncertainty  is nearly 3.5 times greater for the compound  with the 
+larger 𝜎(I). (For interpretation  of the references  to color in this ﬁgure legend, the reader is referred  to the web version of this article.) 
+9 S.E. Lazic and D.P. Williams Artiﬁcial Intelligence in the Life Sciences 1 (2021) 100004 
+Fig. 9 D plots the full distribution  for two samples  that have the 
+same 𝜇, but one has twice the uncertainty  (these are highlighted  with 
+green circles in Fig. 9 B, C, and G). Recall that these distributions  are 
+for the parameter  𝜇and not for the observable  outcome  𝑦 , which is ei- 
+ther safe or toxic. To obtain a prediction  for the observable  we need a 
+data generating  distribution  such as the Bernoulli  distribution,  giving us 
+𝑦 ∼ Bernoulli  ( 𝜇) . Fig. 9 E and F shows the predicted  values of 𝑦 for these 
+two compounds  and note that they are identical,  despite diﬀerent  values 
+of 𝜎. At ﬁrst this may seem strange,  and it occurs because  the Bernoulli  
+distribution  doesn’t have a 𝜎parameter,  and so this information  is lost. 
+Consider  tossing a coin four times and getting 3 heads, our prediction  
+for the probability  of heads is 3∕4 = 0 . 75 (and 1∕4 = 0 . 25 for tails). Sim- 
+ilarly, if we toss a coin 1000 times and get 750 heads, our prediction  
+is still 0.75, even though we are much more certain that the proportion  
+of heads is 0.75 (i.e. 𝜎is much smaller).  The width of the distributions  
+in Fig. 9 D (captured  by 𝜎) provides  the weight of evidence  [26] which 
+quantiﬁes  how much the prediction  will change as more data are gath- 
+ered or as the inputs change.  For example,  a single new observation  with 
+four coin tosses alters the probability  to either 3∕5 = 0 . 6 or 4∕5 = 0 . 8 , de- 
+pending  on whether  a heads or tails was observed,  whereas  with 1000 
+tosses the probability  is still 0.75, rounding  to two decimal  places. 
+Uncertainty  in the predicted  classes is often divided  into aleatoric  
+and epistemic  uncertainty  [25,28]  . Aleatoric  uncertainty  is supposedly  
+due to “inherent  randomness  ”whereas  epistemic  uncertainty  is due to 
+a lack of knowledge.  Without  starting  a philosophical  debate,  we take 
+the position  that all uncertainty  is due to a lack of knowledge  [5,26] . 
+Nevertheless,  we can decompose  our uncertainty  into two components,  
+which we call the outcome  uncertainty  and parameter  uncertainty  , and 
+which correspond  to aleatoric  and epistemic  uncertainty,  respectively.  
+The ﬁrst component  is how close 𝜇is to zero or one –a more conﬁdent  
+prediction  would be close to these bounds,  and the most uncertain  pre- 
+diction would be 𝜇= 0 . 5 . This corresponds  to outcome  uncertainty.  The 
+second component  is how conﬁdent  we are in 𝜇. When a weatherperson  
+states there is a 70% chance of rain tomorrow,  they do not mean exactly 
+70.00000%  but 70% ± some amount.  The uncertainty  in the stated value 
+corresponds  to parameter  uncertainty  and is represented  by the width 
+of the distributions  in Fig. 9 D and the parameter  𝜎(If the model in- 
+cluded other sources  of uncertainty,  these would also be captured  by 
+𝜎and hence 𝜎would  represent  more than just parameter  uncertainty).  
+Using the approach  of Kwon et al. we decompose  the two sources  of 
+uncertainty  for the compounds  and plot outcome  uncertainty  versus the 
+mean prediction  ( 𝜇) in Fig. 9 G [30] . Note how 𝜇largely  explains  the 
+outcome  uncertainty.  The two compounds  have similar outcome  uncer- 
+tainty since they have a similar value of 𝜇( Fig. 9 H). However,  the com- 
+pound with the larger value of 𝜎has nearly 3.5 times greater parameter  
+uncertainty  ( Fig. 9 I). Parameter  uncertainty  or the weight of evidence  
+( 𝜎), provides  important  information  about the uncertainty  of a predic- 
+tion, which is critical for high-stakes  decisions.  
+6. Discussion  
+6.1. Generalisations  and extensions  
+The above examples  used simple models but this framework  can be 
+generalised  to more complex  cases. For example,  we had functions  for 
+the mean and variance,  but any parameter  in the distribution  function  
+can be modelled.  For example,  a Student-t  distribution  has a parameter  
+called the degrees  of freedom  (df) which controls  the heaviness  of the 
+tails. The df could be modelled  as a function  of 𝑥 , just like 𝜇or 𝜎[52] . 
+The above examples  used a single distribution  function,  but ﬂexi- 
+bility can be increased  by using mixtures  of distributions.  For example,  
+outliers  can be modelled  with a mixture  of Gaussian  distributions:  one 
+to account  for the regular  observations  and the second to account  for 
+the outliers.  Metabolite,  gene, and protein  levels are non-negative  and 
+often positively  skewed,  and hence gamma  or lognormal  distributions  
+may be appropriate.  But these distributions  are only deﬁned  for values greater than zero, and there may be zeros in the data, which are often 
+dealt with by adding a small value to all data points. A better option can 
+be to model the data with a two-part  model, one which accounts  for the 
+zeros and the other (e.g. gamma  or lognormal)  which accounts  for the 
+non-zero  values. Such “hurdle  models ”provide  this ﬂexibility  and also 
+return a parameter  that estimates  the proportion  of zeros, which may be 
+scientiﬁcally  interesting  [13] . Taking this idea a step further,  Dirichlet  
+Process  models allow us to specify as many distributions  as needed  to 
+model the data. Instead  of specifying  a single distribution,  we specify 
+a prior over distributions,  and learn them from the data (yes, we can 
+specify a distribution  over distributions!  [42] ). 
+The above examples  also used a single mean function  for each model, 
+but it’s possible  to have a distribution  of mean functions,  which are 
+called Gaussian  Process  models [19,49,54]  . These ﬂexible  models can 
+ﬁt complex  relationships  between  𝑥 and 𝑦 . Surprisingly,  they are not im- 
+plemented  via the mean function,  but by generalising  the variance  func- 
+tion to make it a covariance  function.  Covariance  functions  are not dis- 
+cussed here but they are also useful for modelling  hierarchical  or nested 
+data [24,48]  , and for modelling  dependencies  in time or space. Neu- 
+ral networks  [21,56,68]  and Bayesian  additive  regression  trees (BART)  
+[12,60]  are other options  for ﬂexible  mean functions.  
+6.2. Further advantages  of PPMs 
+In addition  to providing  prediction  uncertainty,  PPMs have several 
+other beneﬁts.  Hyperparameter  values are typically  selected  by trying 
+many options  and choosing  the combination  that performs  best. To 
+avoid overﬁtting,  crossvalidation  or a similar approach  divides  the train- 
+ing data into smaller  subsets,  some of which are used for training  and 
+others to assess performance.  But with small datasets,  crossvalidation  
+can give unstable  models and a poor assessment  of performance.  Many 
+Bayesian  approaches  can learn values of some hyperparameters  using all 
+the training  data and have a built-in  prevention  of overﬁtting  [64,71]  . 
+They also incorporate  the uncertainty  in the hyperparameters  in the pre- 
+dictions.  Models  can still be compared  using only the training  data by 
+estimating  leave-one-out  (LOO) crossvalidation  performance,  without  
+the computational  cost of actually  retraining  the model for each sample 
+[66,67]  . Vehtari  and colleagues  have also developed  methods  to assess 
+when a LOO estimate  is unreliable,  and the model can be retrained  only 
+for these samples  [69] . 
+Another  advantage  is that background  information  such as adverse  
+outcome  pathways  [7] , constraints  on parameters  [34] , or monotonic  
+relationships  [14] can often be incorporated  into the model, which can 
+guide the model to better solutions.  
+Often several structurally  similar compounds  are available  that have 
+diﬀerent  binding  aﬃnities  or potencies,  but also with diﬀerent  results in 
+toxicity  assays, and a decision  must be taken to designate  one compound  
+in the series as the lead. PPMs can not only rank compounds  but also 
+obtain an uncertainty  in the ranking,  thus enabling  decision  makers  to 
+conclude  that one compound  is reliably  better than another  [34,55]  . 
+Finally,  many popular  machine  learning  methods  have a PPM or 
+Bayesian  analogue,  including  regularised  linear and generalised  lin- 
+ear models (lasso, ridge regression)  [10,47,53,45]  , tree models (ran- 
+dom forests,  xgboost)  [11,12,60]  , support  vector machines  [59,64]  , and 
+neural networks  [43,56,68]  . Hence, it is often possible  to convert  your 
+favourite  model into one that provides  prediction  uncertainty.  
+6.3. Drawbacks  and challenges  
+The main drawback  of Bayesian  or other PMMs is that they require  
+more work, possibly  twice as much, since getting appropriately  cali- 
+brated uncertainty  is just as hard as getting accurate  predictions.  For 
+example,  95% prediction  intervals  should contain  95% of the out-of- 
+sample or test data values [72] . 
+For fully Bayesian  methods,  the computational  overhead  may be 
+high, making  it diﬃcult  to iteratively  ﬁt, check, and update models dur- 
+10 S.E. Lazic and D.P. Williams Artiﬁcial Intelligence in the Life Sciences 1 (2021) 100004 
+ing development  (although  computations  are often much quicker  when 
+making  predictions).  Storage  for parameter  values may be a problem  for 
+large models since this equals the number  of parameters  times number  
+of Markov  chain Monte Carlo draws. These approaches  may therefore  
+be harder to scale to large datasets,  but faster and scalable  algorithms  is 
+an active area of research.  Another  solution  to large data is to cleverly  
+select a weighted  subset of samples  that is much smaller  than the origi- 
+nal but captures  the essential  features.  This “coreset  ”approach  enables  
+standard  PPM methods  to be used on the smaller  dataset with little loss 
+of information  [8,22] . 
+Finally,  not all sources  of uncertainty  can be captured.  Many sources  
+of uncertainty  discussed  above arise because  many modelling  options  
+are available,  and diﬀerent  choices  lead to diﬀerent  predictions.  All of 
+the choices  relate to the prediction  model, but many decisions  need to 
+be made outside  of the model. We refer to these extra-model  choices  as 
+the project workﬂow  and they include  experimental  decisions  such as 
+the technology,  cell-line,  assay, antibodies,  protocol,  and so on. Also 
+included  are data processing  pipelines  where raw data are cleaned,  
+transformed,  categorised,  coded, and normalised  before they are entered  
+into a prediction  model. A single workﬂow  is commonly  used, with the 
+untested  assumption  that variations  in the workﬂow  will lead to the 
+same predictions  and results.  However,  variations  in workﬂows  and an- 
+alytic decisions  do lead to variations  results [4,23,32,57,58,61,62]  . 
+6.4. Reporting  uncertainty  to help risk communication  and decision  making 
+The ultimate  aim of prediction  models in drug discovery  is to en- 
+able better decision  making.  Thus, not only should predictions  be accu- 
+rate with prediction  uncertainty  adequately  represented,  but the results 
+should be easy to understand  by decision  makers.  Fortunately,  PPMs 
+provide  intuitive  results for continuous  ( Fig. 6 D), binary ( Fig. 9 D), cat- 
+egorical,  and ordered  categorical  outcomes  [56,71]  , as well as for com- 
+pound rankings  [34,55]  . We have found that safety pharmacologists  and 
+other project members  can easily interpret  the predictive  distributions  
+provided  by PPMs and value the conﬁdence  in the predictions  that these 
+distributions  provide  [34,71]  . 
+With recent advances  in algorithms,  hardware,  and software,  
+Bayesian  or other PPMs are now feasible  for most –i f not all –m a - 
+chine learning  problems  encountered  in drug discovery.  Making  PPMs 
+the standard  approach  for critical ML problems  will enable more in- 
+formed  and better decisions.  
+Declaration  of Competing  Interest  
+The authors  declare  that they have no known competing  ﬁnancial  
+interests  or personal  relationships  that could have appeared  to inﬂuence  
+the work reported  in this paper. 
+References  
+[1] Bezanson J , Edelman A , Karpinski S , Shah VB . Julia: a fresh approach to numerical computing. SIAM Rev 2017;59(1):65–98 . [2] Blackwell M , Honaker J , King G . A uniﬁed approach to measurement error and miss- ing data: overview and applications. Sociol Methods Res 2015;46(3):303–41
+ . [3] Blundell C , Cornebise J , Kavukcuoglu K , Wierstra D . Weight uncertainty in neural networks. In: Proceedings of the 32nd international conference on international con- ference on machine learning. In: ICML’15, 37; 2015. p. 1613–22 . [4] Botvinik-Nezer R , Holzmeister F , Camerer CF , 
+Dreber A , Huber J , Johannesson M , Kirchler M , Iwanir R , Mumford JA , Adcock RA , Avesani P , Baczkowski BM , Ba- jracharya A , Bakst L , Ball S , Barilari M , Bault N , Beaton D , Beitner J , Benoit RG
+ , Berkers RMWJ , Bhanji JP , Biswal BB , Bobadilla-Suarez S , Bortolini T , Bottenhorn KL , Bowring A , Braem S , Brooks HR , Brudner EG , Calderon CB , Camilleri JA , Castrel- lon JJ , Cecchetti L , Cieslik EC , Cole ZJ , 
+Collignon O , Cox RW , Cunningham WA , Czoschke S , Dadi K , Davis CP , Luca AD , Delgado MR , Demetriou L , Dennison JB , Di X , Dickie EW , Dobryakova E , Donnat CL , Dukart J , Duncan NW , Durnez J ,
+ Eed A , Eickhoﬀ SB , Erhart A , Fontanesi L , Fricke GM , Fu S , Galván A , Gau R , Genon S , Glatard T , Glerean E , Goeman JJ , Golowin SAE , González-García C , Gorgolewski KJ , Grady CL , Green MA , 
+Guassi Moreira JF , Guest O , Hakimi S , Hamilton JP , Han- cock R , Handjaras G , Harry BB , Hawco C , Herholz P , Herman G , Heunis S , Hoﬀ- staedter F , Hogeveen J , Holmes S , Hu CP , Huettel SA ,
+ Hughes ME , Iacovella V , Iordan AD , Isager PM , Isik AI , Jahn A , Johnson MR , Johnstone T , Joseph MJE , Juliano AC , Kable JW , Kassinopoulos M , Koba C , Kong XZ , Koscik TR , Kucukboy- aci NE , Kuhl BA , Kupek S , Laird AR , Lamm C , Langner R , Lauharatanahirun N , Lee H , Lee S , Leemans A , Leo A
+ , Lesage E , Li F , Li MYC , Lim PC , Lintz EN , Liphardt SW , Vermeer AB , Losecaat Love BC , Mack ML , Malpica N , Marins T , Maumet C , Mc- Donald K , McGuire JT , Melero H , Méndez Leal 
+AS , Meyer B , Meyer KN , Mihai G , Mitsis GD , Moll J , Nielson DM , Nilsonne G , Notter MP , Olivetti E , Onicas AI , Pa- pale P , Patil KR , Peelle JE , Pérez A , Pischedda D , Poline JB ,
+ Prystauka Y , Ray S , Reuter-Lorenz PA , Reynolds RC , Ricciardi E , Rieck JR , Rodriguez-Thompson AM , Romyn A , Salo T , Samanez-Larkin GR , Morales E , Schlichting ML , Schultz DH , Shen Q , Sheridan MA , Silvers JA , Skagerlund K 
+, Smith A , Smith DV , Sokol-Hess- ner P , Steinkamp SR , Tashjian SM , Thirion B , Thorp JN , Tinghög G , Tisdall L , Tomp- son SH , Toro-Serey C , Torre Tresols JJ , Tozzi L , Truong V , Turella L , van ’t
+ Veer AE , Verguts T , Vettel JM , Vijayarajah S , Vo K , Wall MB , Weeda WD , Weis S , White DJ , Wisniewski D , Xifra-Porxas A , Yearling EA , Yoon S , Yuan R , Yuen KSL , Zhang L , Zhang X 
+, Zosky JE , Nichols TE , Poldrack RA , Schonberg T . Variability in the analy- sis of a single neuroimaging dataset by many teams. Nature 2020;582:84–8 . [5] Briggs W . Uncertainty: the soul of modeling, probability and statistics. New York, NY: Springer; 2016 . [6] Brown T.B., Mann
+ B., Ryder N., Subbiah M., Kaplan J., Dhariwal P., Neelakantan A., Shyam P., Sastry G., Askell A., Agarwal S., Herbert-Voss A., Krueger G., Henighan T., Child R., Ramesh A., Ziegler D.M., Wu J., Winter C., Hesse C., Chen M., Sigler E., Litwin M., Gray S., Chess B., Clark J., Berner 
+C., McCandlish S., Radford A., Sutskever I., Amodei D.. Language models are few-shot learners. 2020. ArXiv. [7] Burgoon LD , Angrish M , Garcia-Reyero N , Pollesch N , Zupanic A , Perkins E . Predict- ing the probability that a chemical causes steatosis using adverse outcome pathway bayesian networks (AOPBNs).
+ Risk Anal 2019;40(3):512–23 . [8] Campbell T , Broderick T . Bayesian coreset construction via greedy iterative geodesic ascent. In: Dy J, Krause A, editors. Proceedings of the 35th international conference on machine learning. Proceedings of Machine Learning Research, 80. PMLR; 2018. p. 698–706 . [9] Carroll RJ , Ruppert 
+D , Stefanski LA , Crainiceanu CM . Measurement error in nonlin- ear models: a modern perspective. 2nd ed. Boca Raton, FL: Chapman & Hall/CRC; 2006 . [10] Carvalho CM , Polson NG , Scott JG . Handling sparsity via the horseshoe. Proc Mach Learn Res 2009;5:73–80 . [11] Chipman HA
+ , George EI , McCulloch RE . Bayesian CART model search. J Am Stat Assoc 1998;93(443):935–48 . [12] Chipman HA , George EI , McCulloch RE . BART: Bayesian additive regression trees. Ann Appl Stat 2010;4(1):266–98 . [13] Cragg JG . Some statistical models for limited dependent variables with application 
+to the demand for durable goods. Econometrica 1971;39(5):829 . [14] DePalma G , Craig BA . Bayesian monotonic errors-in-variables models with applica- tions to pathogen susceptibility testing. Stat Med 2017;37(3):487–502 . [15] Gal Y , Ghahramani Z . Dropout as a bayesian approximation: representing model uncertainty in deep learning. In: Balcan
+ MF, Weinberger KQ, editors. Proceedings of The 33rd International Conference on Machine Learning. Proceedings of Machine Learning Research, 48. New York, New York, USA: PMLR; 2016. p. 1050–9 . [16] Ge H , Xu K , Ghahramani Z . Turing: a language for ﬂexible probabilistic inference. In: International conference on 
+artiﬁcial intelligence and statistics, AISTATS 2018, 9–11 April 2018, Playa Blanca, Lanzarote, Canary Islands, Spain; 2018. p. 1682–90 . [17] Geisser S . Predictive inference: an introduction. New York, NY: Chapman & Hall; 1993 . [18] Gelman A , Carlin JB , Stern HS , Rubin DB . Bayesian data analysis.
+ 2nd ed. Boca Raton: Chapman & Hall/CRC; 2004 . [19] Gramacy RB . Surrogates: gaussian process modeling, design, and optimization for the applied sciences. CRC Press; 2020 . [20] Gustafson P . Measurement error and misclassiﬁcation in statistics and epidemiology: impacts and bayesian adjustments. Boca Raton: Chapman & Hall/CRC; 2004 
+. [21] Hirschfeld L , Swanson K , Yang K , Barzilay R , Coley CW . Uncertainty quantiﬁca- tion using neural networks for molecular property prediction. J Chem Inf Model 2020;60(8):3770–80 . [22] Huggins J.H., Campbell T., Broderick T.. Coresets for scalable Bayesian logistic re- gression. 2016. ArXiv. [23] Huntington-Klein
+ N , Arenas A , Beam E , Bertoni M , Bloem JR , Burli P , et al. The inﬂuence of hidden researcher decisions in applied microeconomics. Econ Inq 2021 . [24] Johnstone RH , Bardenet R , Gavaghan DJ , Mirams GR . Hierarchical Bayesian infer- ence for 
+ion channel screening dose-response data. Wellcome Open Res 2016;1:6 . [25] Kendall A , Gal Y . What uncertainties do we need in Bayesian deep learning for com- puter vision?. Advances in Neural Information Processing Systems, 30. Curran As- sociates, Inc.; 2017 . [26] Keynes JM . A treatise on probability.
+ London: Macmillan & Co; 1921 . [27] Khosravi A , Nahavandi S , Creighton D , Atiya AF . Comprehensive review of neu- ral network-based prediction intervals and new advances. IEEE Trans Neural Netw 2011;22(9):1341–56 . [28] Kiureghian AD , Ditlevsen O . Aleatory or epistemic? Does it matter? Struct 
+Saf 2009;31(2):105–12 . [29] Kristiadi A , Hein M , Hennig P . Being Bayesian, even just a bit, ﬁxes overconﬁdence in ReLU networks. In: I HDII, Singh A, editors. Proceedings of the 37th international conference on machine learning. Proceedings of Machine Learning Research, 119. PMLR; 2020. p. 5436–46 . [30]
+ Kwon Y , Won JH , Kim BJ , Paik MC . Uncertainty quantiﬁcation using Bayesian neural networks in classiﬁcation: application to biomedical image segmentation. Comput Stat Data Anal 2020;142:106816 . [31] Lakshminarayanan B , Pritzel A , Blundell C . Simple and scalable predictive uncer- tainty estimation using deep 
+ensembles. In: Advances in neural information process- ing systems, 30; 2017. p. 6402–13 . 
+11 S.E. Lazic and D.P. Williams Artiﬁcial Intelligence in the Life Sciences 1 (2021) 100004 
+[32] Landy JF , Jia ML , Ding IL , Viganola D , Tierney W , Dreber A , et al. Crowdsourc- ing hypothesis tests: making transparent how design choices shape research results. Psychol Bull 2020;146(5):451–79 . [33] Lazic SE . Four simple ways to increase power without increasing the sample
+ size. Lab Anim 2018;52(6):621–9 . [34] Lazic SE , Edmunds N , Pollard CE . Predicting drug safety and communicating risk: beneﬁts of a bayesian approach. Toxicol Sci 2018;162(1):89–98 . [35] Lazic SE , Williams DP . Improving drug safety predictions by reducing poor analytical practices. Toxicol Res Appl 2020;4 
+239784732097863 . [36] Lesaﬀre E , Lawson AB . Bayesian biostatistics. Chichester, UK: Wiley; 2012 . [37] Little RJA , Rubin DB . Statistical analysis with missing data. 3rd ed. Hoboken, NJ: WIley; 2020 . [38] Lunn D , Jackson C , Best N , Thomas A , Spiegelhalter D .
+ The BUGS book: a practical introduction to bayesian analysis. Boca Raton, FL: CRC Press; 2013 . [39] McElreath R . Statistical rethinking: Bayesian course with examples in R and Stan. Boca Raton, FL: CRC Press; 2016 . [40] Mervin LH , Johansson S , Semenova E , Giblin KA , 
+Engkvist O . Uncertainty quantiﬁ- cation in drug design. Drug Discov Today 2021;26(2):474–89 . [41] Muﬀ S , Riebler A , Held L , Rue H , Saner P . Bayesian analysis of measure- ment error models using integrated nested Laplace approximations. J R Stat Soc 2014;64(2):231–52 . [42] Muller P ,
+ Quintana FA , Jara A , Hanson T . Bayesian nonparametric data analysis. Springer; 2015 . [43] Neal RM . Bayesian learning for neural networks. New York, NY: Springer; 1996 . [44] Nix D , Weigend A . Estimating the mean and variance of the target probability dis- tribution. In: 
+Proceedings of 1994 IEEE international conference on neural networks (ICNN’94). IEEE; 1994 . [45] Park T , Casella G . The Bayesian lasso. J Am Stat Assoc 2008;103(482):681–6 . [46] Pearce T , Leibfried F , Brintrup A . Uncertainty in neural networks: approximately Bayesian ensembling. In: Chiappa S, Calandra R,
+ editors. Proceedings of the twenty third international conference on artiﬁcial intelligence and statistics. Proceedings of Machine Learning Research, 108. PMLR; 2020. p. 234–44 . [47] Piironen J , Vehtari A . Sparsity information and regularization in the horseshoe and other shrinkage priors. Electron J Stat 2017;11(2):5018–51 . [48] Pinheiro JC 
+, Bates DM . Mixed-eﬀects models in S and S-Plus. London: Springer; 2000 . [49] Rasmussen CE , Williams CKI . Gaussian processes for machine learning. Cambridge, MA: MIT Press; 2006 . [50] Reynolds J , Malcomber S , White A . A Bayesian approach for inferring global points of departure
+ from transcriptomics data. Computat Toxicol 2020 100138 . [51] Richardson S , Gilks WR . A Bayesian approach to measurement error prob- lems in epidemiology using conditional independence models. Am J Epidemiol 1993;138(6):430–42 . [52] Rigby R . Distributions for modelling location, scale, and shape : using GAMLSS in R. 
+Bocat Raton, FL: CRC Press; 2020 . [53] Ro čková V , George EI . The spike-and-slab LASSO. J Am Stat Assoc 2018;113(521):431–44 . [54] Schulz E , Speekenbrink M , Krause A . A tutorial on gaussian process regression: mod- elling, exploring, and exploiting functions. J Math Psychol 2018;85:1–16 . [55] Semenova E., Guerriero M.L., Zhang B., Hock A., Hopcroft P., Kadamur G., Afzal A.M., Lazic S.E.. Flexible ﬁtting of PROTAC concentration-response curves with
+ Gaussian processes. 2020a. BioRxiv. [56] Semenova E , Williams DP , Afzal AM , Lazic SE . A Bayesian neural network for toxicity prediction. Computat Toxicol 2020;16:100133 . [57] Shi L , Campbell G , Jones WD , Campagne F , Wen Z , Walker SJ , et al. The 
+microar- ray quality control (MAQC)-II study of common practices for the development and validation of microarray-based predictive models. Nat Biotechnol 2010;28:827–38 . [58] Silberzahn R , Uhlmann EL , Martin DP , Anselmi P , Aust F , Awtrey E , et al. Many analysts, one data set: making transparent how
+ variations in analytic choices aﬀect results. Adv Methods Pract Psychol Sci 2018;1(3):337–56 . [59] Sollich P . Bayesian methods for support vector machines: evidence and predictive class probabilities. Mach Learn 2002;46(1/3):21–52 . [60] Sparapani RA , Logan BR , McCulloch RE , Laud PW . Nonparametric survival analysis using Bayesian 
+Additive Regression Trees (BART). Stat Med 2016;35(16):2741–53 . [61] Stanton-Geddes J , de Freitas CG , Dambros CdS . In defense of P values: comment on the statistical methods actually used by ecologists. Ecology 2014;95:637–42 . [62] Steegen S , Tuerlinckx F , Gelman A , Vanpaemel W . Increasing transparency
+ through a multiverse analysis. Perspect Psychol Sci 2016;11(5):702–12 . [63] Teye M , Azizpour H , Smith K . Bayesian uncertainty estimation for batch normalized deep networks. In: Dy J, Krause A, editors. Proceedings of the 35th international conference on machine learning. Proceedings of Machine Learning Research, 80. PMLR; 2018. 
+p. 4907–16 . [64] Tipping ME . Sparse bayesian learning and the relevance vector machine. JMLR 2001;1(1):211–44 . [65] van Buuren S . Flexible imputation of missing data. Boca Raton, FL: CRC Press; 2012 . [66] Vehtari A , Gelman A , Gabry J . Erratum to: practical Bayesian model evaluation
+ using leave-one-out cross-validation and WAIC. Stat Comput 2016;27(5) 1433–1433 . [67] Vehtari A , Gelman A , Gabry J . Practical Bayesian model evaluation using leave-one-out cross-validation and WAIC. Stat Comput 2016;27(5):1413–32 . [68] Vehtari A , Lampinen J . Bayesian neural networks: case studies in industrial ap- plications. In: 
+Soft Computing in Industrial Applications. Springer London; 2000. p. 415–24 . [69] Vehtari A., Simpson D., Gelman A., Yao Y., Gabry J.. Pareto smoothed importance sampling. 2015. ArXiv 1507.02646. [70] Welling M , Teh YW . Bayesian learning via stochastic gradient Langevin dynamics. In: Proceedings of the 28th international conference on
+ international conference on machine learning. In: ICML’11, 33; 2011. p. 681–8 . [71] Williams DP , Lazic SE , Foster AJ , Semenova E , Morgan P . Predicting drug-induced liver injury with Bayesian machine learning. Chem Res Toxicol 2020;33(1):239–48 . [72] Zhang Y , Lee AA . Bayesian semi-supervised 
+learning for uncertainty-calibrated pre- diction of molecular properties and active learning. Chem Sci 2019;10(35):8154–63 . 
+12 
