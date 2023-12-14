@@ -1,0 +1,213 @@
+Electronic Notes in Theoretical Computer Science 132 (2005) 5–17	
+www.elsevier.com/locate/entcs
+
+
+Cobalt: A Language for Writing Provably-Sound Compiler Optimizations
+Sorin Lerner1
+Department of Computer Science & Engineering University of Washington
+Seattle, WA, USA
+Todd Millstein2
+Computer Science Department University of California, Los Angeles Los Angeles, CA, USA
+Craig Chambers3
+Department of Computer Science & Engineering University of Washington
+Seattle, WA, USA
+
+Abstract
+We overview the current status and future directions of the Cobalt project. Cobalt is a domain- specific language for implementing compiler optimizations as guarded rewrite rules. Cobalt opti- mizations operate over a C-like intermediate representation including unstructured control flow, pointers to local variables and dynamically allocated memory, and recursive procedures. The de- sign of Cobalt engenders a natural inductive strategy for proving the soundness of optimizations. This strategy is fully automated by requiring an automatic theorem prover to discharge a small set of simple proof obligations for each optimization. We have written a variety of forward and backward intraprocedural dataflow optimizations in Cobalt, including constant propagation and folding, branch folding, full and partial redundancy elimination, full and partial dead assignment elimination, and simple forms of points-to analysis. The implementation of our soundness-checking strategy employs the Simplify automatic theorem prover, and we have used this implementation to automatically prove the above optimizations correct. An execution engine for Cobalt optimizations is implemented as part of the Whirlwind compiler infrastructure.
+Keywords: Compiler optimization, automated correctness proofs.
+
+
+
+
+
+1571-0661 © 2005 Elsevier B.V. Open access under CC BY-NC-ND license.
+doi:10.1016/j.entcs.2005.03.022
+
+Cobalt By Example
+This section overviews the current status of the Cobalt language. We in- formally describe Cobalt and our technique for proving Cobalt optimizations sound through a small example. More details on the language, the technique for proving soundness automatically, and the implementation of the language and its soundness checker are provided in an earlier paper [9]. Section 2 de- scribes our current and future directions for increasing the expressiveness of Cobalt while retaining automated soundness checking. Section 3 describes related work, and section 4 concludes.
+Forward Transformation Patterns
+The heart of a Cobalt optimization is its transformation pattern. For a forward optimization, a transformation pattern has the following form:
+ψ1 followed by ψ2 until s ⇒ s' with witness P
+A transformation pattern describes the conditions under which a statement s may be transformed to s'. The formulas ψ1 and ψ2, which are properties of a statement such as “x is defined and y is not used,” together act as the guard indicating when it is legal to perform this transformation on a procedure P : s can be transformed to s' if on all paths in P ’s control-flow graph (CFG) from the start of the procedure to s, there exists a statement satisfying ψ1, followed by zero or more statements satisfying ψ2, followed by s. Figure 1 shows this scenario pictorially.
+Forward transformation patterns codify a scenario common to many for- ward dataflow analyses: an enabling statement establishes the conditions nec- essary for a transformation to be performed downstream, and any intervening statements are innocuous, i.e., do not invalidate the conditions. The formula ψ1 captures the properties that make a statement enabling, and ψ2 captures the properties that make a statement innocuous. The witness P captures the conditions established by the enabling statement that allow the transforma- tion to be safely performed. Witnesses have no effect on the semantics of an optimization; they will be discussed more below in the context of our strategy for automatically proving optimizations sound.
+Example 1 A simple form of constant propagation replaces statements of the form X := Y with X := C if there is an earlier (enabling) statement of the form Y := C and each intervening (innocuous) statement does not modify Y .
+
+1 Email: lerns@cs.washington.edu
+2 Email: todd@cs.ucla.edu
+3 Email: chambers@cs.washington.edu
+
+
+paths in the CFG
+
+
+boundary where
+ holds
+
+
+region where
+ holds
+
+
+
+
+
+statement s
+
+Fig. 1. CFG paths leading to a statement s which can be transformed to s' by the transformation pattern ψ1 followed by ψ2 until s ⇒ s' with witness P. The shaded region can only be entered through a statement satisfying ψ1 , and all statements within the region satisfy ψ2 . The statement s can only be reached by first passing through this shaded region.
+The enabling statement ensures that variable Y holds the value C, and this condition is not invalidated by the innocuous statements, thereby allowing the transformation to be safely performed downstream. This sequence of events is expressed by the following transformation pattern (the witness is discussed in more detail in section 1.3):
+stmt (Y := C)
+followed by
+¬mayDef (Y )
+until
+X := Y  ⇒ X := C
+with witness
+η(Y )= C
+
+The “pattern variables” X and Y may be instantiated with any variables of the procedure being optimized, while the pattern variable C may be instantiated with constants in the procedure.
+
+Labels
+Each node in a procedure’s CFG is labeled with properties that are true at that node, such as stmt (x := 5) or mayDef (y). The formulas ψ1 and ψ2 in an optimization are boolean expressions over these labels.
+Users can define a new kind of label by giving a predicate over a statement,
+
+
+referred to in the predicate’s body using the distinguished variable currStmt. As a trivial example, the stmt(S) label, which denotes that the statement at the current node is S, can be defined as:
+stmt (S)   currStmt = S
+As another example, syntacticDef (Y ), which stands for syntactic definition of Y , can be defined as:
+syntacticDef (Y )   case currStmt of
+decl X	e⇒ X = Y X := ... e⇒ X = Y
+else	e⇒ false
+endcase
+The label syntacticDef (Y ) holds at a node if and only if the current statement is a declaration of or an assignment to Y . The “case” predicate is a conve- nience that provides a form of pattern matching over the C-like intermediate language that Cobalt optimizations manipulate, but it is easily desugared into an ordinary logical expression. Similarly, pattern variables and ellipses get desugared into ordinary quantified variables.
+Given the definition of syntacticDef , a conservative version of the mayDef
+label from example 1 can be defined as:
+mayDef (Y )   case currStmt of
+∗X := Z	e⇒ true
+X := P (Z) e⇒ true
+else	e⇒ syntacticDef (Y )
+endcase
+In other words, a statement may define variable Y if the statement is either a pointer store (since our intermediate language allows taking the address of a local variable), a procedure call (since the procedure may be passed pointers from which the address of Y is reachable), or otherwise a syntactic definition of Y .
+Soundness
+A transformation pattern is sound if all the transformations it allows are semantics-preserving, for all possible intermediate-language procedures. For- ward transformation patterns have a natural approach for understanding their soundness. Consider a statement s transformed to s' in procedure P . Any execution trace of P that contains s' will at some point execute an enabling statement, followed by zero or more innocuous statements, before reaching
+
+
+s'. As mentioned earlier, executing the enabling statement establishes some conditions at the subsequent state of execution. These conditions are then preserved by the innocuous statements. Finally, the conditions imply that s and s' have the same effect at the point where s' is executed. As a result, the original program and the transformed program have the same semantics.
+Our automatic strategy for proving optimizations sound is based on the above intuition. As part of the code for a forward transformation pattern, optimization writers provide a forward witness P, which is a (possibly first- order) predicate over an execution state, denoted η. The witness plays the role of the conditions mentioned in the previous paragraph and is the intuitive reason why the transformation pattern is correct. Our strategy attempts to prove that the witness is established by the enabling statement and preserved by the innocuous statements, and that it implies that s and s' have the same effect. More specifically, for each forward transformation pattern ψ1 followed
+by ψ2 until s ⇒ s' with witness P, we ask an automatic theorem prover to discharge the following obligations:
+If ψ1 holds at an arbitrary node n in an arbitrary CFG and the statement at that node is executed from an arbitrary execution state, then P will hold in the resulting execution state.
+If ψ2 holds at an arbitrary node n in an arbitrary CFG and the statement at that node is executed from an execution state satisfying P, then P will also hold in the resulting execution state.
+If s and s' are each executed from the same execution state satisfying P, then the resulting execution states will be identical.
+We have proven that if these obligations hold for any particular optimization, then that optimization is sound [9].
+In example 1, the forward witness η(Y )= C denotes the fact that the value of Y in execution state η is C. Our implementation automatically discharges the above obligations: the witness η(Y )= C is established by the statement Y := C, preserved by statements that do not modify the contents of Y , and implies that X := Y and X := C have the same effect. Therefore, the constant propagation transformation pattern is automatically proven to be sound.
+
+
+
+Other Features of Cobalt
+Cobalt includes several other features that increase its expressiveness, while still preserving fully automatic soundness reasoning.
+
+Backward Transformation Patterns
+Cobalt has a notion of a backward transformation pattern, which naturally allows the expression of backward optimizations like dead-assignment elimi- nation. A backward transformation pattern is similar to a forward one, except that the direction of the flow of analysis is reversed:
+ψ1 preceded by ψ2 since s ⇒ s' with witness P
+The backward transformation pattern above says that s may be transformed to s' in a procedure P if on all paths in P ’s CFG from s to the end of the procedure, there exists a statement satisfying ψ1, preceded by zero or more statements satisfying ψ2, preceded by s.
+
+Proﬁtability Heuristics
+For some optimizations, including our constant-propagation example, all legal transformations are also proﬁtable. However, in more complex optimizations, such as code motion and optimizations that trade off time and space, many transformations may preserve program behavior while only a small subset of them improve the code. To address this distinction between legality and prof- itability, a Cobalt optimization is written in two pieces. The transformation pattern only defines which transformations are legal. An optimization sep- arately describes which of the legal transformations are also profitable and therefore should be performed; we call this second piece of an optimization its proﬁtability heuristic.
+This way of factoring optimizations into a transformation pattern and a profitability heuristic is critical to our ability to prove optimizations sound au- tomatically, since only an optimization’s transformation pattern affects sound- ness. Transformation patterns tend to be simple even for complicated opti- mizations, with the bulk of an optimization’s complexity pertaining to prof- itability. Profitability heuristics can be written in any language, thereby re- moving any limitations on their expressiveness. Profitability heuristics are completely ignored by the soundness checker. Without profitability heuristics, the extra complexity added to transformation patterns to express profitability information would prevent automated correctness reasoning.
+
+Pure Analyses
+In addition to optimizations, Cobalt allows users to write pure analyses that do not perform transformations. These analyses can be used to compute or verify properties of interest about a procedure and to provide information to be consumed by later transformations. A pure analysis defines a new label, and the result of the analysis is a labeling of the given CFG. For instance, a
+
+
+does-not-point-to analysis can be defined, which results in nodes of the CFG being annotated with labels of the form doesNotPointTo(X, Y ). The new label can then be used by other analyses, optimizations, or label definitions. For example, it can be used to make the definition of mayDef in section 1.2 less conservative in the face of pointer stores.
+A forward pure analysis is similar to a forward optimization, except that it does not contain a rewrite rule or a profitability heuristic. Instead, it has a defines clause that gives a name to the new label. The strategy for proving soundness of a pure analysis is a slight variant on the strategy for proving soundness of a forward transformation pattern.
+
+Current and Future Work
+Our current work on Cobalt is geared toward further increasing expressiveness while maintaining the ability to automatically reason about soundness. We are designing a second version of the language, Cobalt V2, that incorporates the lessons we have learned from the first version, Cobalt V1, while significantly enhancing its capabilities. In this section we use a simple example to give a flavor for what Cobalt V2 will look like. We focus on pure analyses, which best illustrate the advantages of Cobalt V2, but transformations can be easily adapted to the Cobalt-V2 style as well.
+A pure analysis in Cobalt V1 states under what conditions a node should be annotated with a particular label, which we also refer to as a dataflow fact. The conditions are global in that they talk about all paths in the CFG leading to the node in question. Global conditions are appealing because in one shot they concisely describe the nodes that should be annotated with a given dataflow fact. However, in order to automate soundness reasoning, restrictions have to be imposed on these global conditions, and in Cobalt V1 only one stylized form of global condition is supported. Instead of providing the analysis writer with this one stylized global conditions, the main idea in Cobalt V2 is to provide the analysis writer with stylized local conditions, which can then be combined in flexible ways to achieve many kinds of global conditions.
+As an example, consider a simple does-not-point-to analysis in Cobalt V1:
+stmt (X := &Z) Λ Y /= Z
+followed by
+чmayDef (X)
+defines
+doesNotPointTo(X , Y )
+with witness
+
+
+η(X) /= η(&Y )
+
+This analysis says that a node n can be labeled with doesN otP ointT o(X, Y ) if on all CFG paths to n, there is a point at which X is assigned the address of a variable different from Y , and then X is not modified until n. This global condition can easily be expressed with two local rules in Cobalt V2:
+if	stmt (X := &Z) Λ Y /= Z
+then doesNotPointTo(X, Y )@cfg out
+if	doesNotPointTo(X, Y )@cfg in Λ чmayDef (X)
+then doesNotPointTo(X, Y )@cfg out
+
+The first rule says that the outgoing CFG edge of an assignment X := &Z should be annotated with doesN otP ointT o(X, Y ) for each variable Y different from Z. The second rule says that if doesN otP ointT o(X, Y ) appears on the incoming edge of a node that does not modify X, then doesN otP ointT o(X, Y ) should also appear on the outgoing edge.
+In addition to these two rules, the analysis writer must also provide the meaning of the does-not-point-to fact, which plays an analogous role to the witness in Cobalt V1:
+define edge fact doesNotPointTo(X, Y )
+with meaning η(X) /= η(&Y )
+The meaning of a dataflow fact D is a predicate, with the intent that whenever D appears on an edge, the meaning of D should hold in all concrete stores that can appear on that edge. Our goal is to check automatically that this intent becomes reality, and we can do this by checking that each if-then rule is sound separately. For each rule we ask the theorem prover to show that if the meaning of the antecedent holds at the incoming edge, then the meaning of the consequent holds at the outgoing edge. For example, in the second rule above we would ask the theorem prover to show that if a statement satisfying чmayDef (X) is executed in a state satisfying X /= &Y , then the resulting state will also satisfy X /= &Y .
+The local if-then rules of Cobalt V2 offer several advantages over the global condition in Cobalt V1. First, the local rules are more flexible and more expressive. Because the rules operate at the granularity of a node, our does- not-point-to analysis can now be easily extended with many new rules, for example:
+if   stmt (X := Z) Λ doesNotPointTo(Z , Y )@cfg in
+then doesNotPointTo(X, Y )@cfg out
+
+if	stmt (∗A := B) Λ mustPointTo(A, X )@cfg in Λ
+doesNotPointTo(B, Y )@cfg in
+then doesNotPointTo(X, Y )@cfg out
+
+The second rule above assumes the existence of a dataflow fact mustP ointT o(X, Y ), which signifies that X definitely points to Y . This dataflow fact can be defined using another set of if-then rules.
+Another advantage of Cobalt V2 is that the local if-then rules can be seen as flow functions: given some incoming dataflow facts, they determine which outgoing dataflow facts to propagate. This interpretation of if-then rules pro- vides an explanation of Cobalt in terms of concepts already familiar to many analysis writers, thus making the language easier to adopt. Furthermore, because the flow-function formalism matches the commonly used formalism in the analysis community, much previous work on dataflow analysis should adapt seamlessly to Cobalt V2. For example, we will attempt to incorpo- rate into V2 some of our previous work on composing and staging dataflow analyses [8,18] and on deriving interprocedural analyses from intraprocedural ones [1].
+
+Related Work
+The idea of analyzing optimizations written in a domain-specific language was introduced by Whitfield and Soffa [28]. By analyzing optimizations expressed in a language called Gospel, their system can automatically determine if one optimization helps or hinders another one. This information can then be used to determine an order in which to run optimizations. Their framework also in- cludes a tool, Genesis [27], for executing optimizations written in Gospel. The main difference between our work and the Gospel work is in the properties of interest: we explore soundness whereas Whitfield and Soffa explore optimiza- tion dependencies. Despite the different focus, our languages have similarities: both Gospel and Cobalt optimizations consist of a rewrite rule (an ACTION clause in Gospel) guarded by some condition (a PRECONDITION clause in Gospel). The Gospel rewrite rules are more flexible than the Cobalt ones, since they allow moving statements. On the other hand, Gospel has dataflow dependencies as primitives in the language, whereas Cobalt allows the user to define such dependencies with dataflow facts.
+Our work is also related to the use of temporal logic for expressing and reasoning about analyses [24,25,22,23,7], since the guards of Cobalt’s transfor- mation patterns can be viewed as restricted kinds of temporal-logic formulas. Our language was in fact inspired by recent work in the temporal-logic direc-
+
+
+tion by Lacey et al. [7]. Lacey describes a language for writing optimizations as guarded rewrite rules evaluated over a labeled CFG, and our transformation patterns are modeled on this language. Lacey’s intermediate language lacks several constructs found in realistic languages, including pointers, dynamic memory allocation, and procedures. Lacey describes a general strategy, based on relating execution traces of the original and transformed programs, for manually proving the soundness of optimizations in his language. Three ex- ample optimizations are shown and proven sound by hand using this strategy. Unfortunately, the generality of this strategy makes it difficult to automate.
+Lacey’s guards may be arbitrary CTL formulas, while our guard language can be viewed as a strict subset of CTL that codifies a particularly common idiom. However, we are still able to express more precise versions of Lacey’s three example optimizations (as well as many others) and to prove them sound automatically. Further, Lacey’s optimization language has no notion of prof- itability heuristics or of pure analyses. Therefore, expressing optimizations that employ profitability or pointer information (assuming Lacey’s language were augmented with pointers) would instead require writing more compli- cated guards, and some optimizations we support may not be expressible by Lacey.
+A significant amount of work has been done on manually proving optimiza- tions correct [10,11,2,3,5,17,4]. Transformations have also been proven correct mechanically, but not automatically: the transformation is proven sound using an interactive theorem prover, which requires user involvement. For example, Young [29] has proven a code generator correct using the Boyer-Moore theo- rem prover enhanced with an interactive interface [6]. In contrast, Cobalt’s proof strategy is fully automated.
+Instead of proving that the compiler is always correct, translation vali- dation [19,15] and credible compilation [21,20] both attack the problem of checking the correctness of a given compilation run. Therefore, a bug in an optimization only appears when the compiler is run on a program that trig- gers the bug. Our work allows optimizations to be proven correct before the compiler is even run once. However, to do so we require optimizations to be written in a special-purpose language. Our approach also requires the Cobalt execution engine to be part of the trusted computing base, while translation validation and credible compilation do not require trust in any part of the compiler.
+Proof-carrying code [14], certified compilation [16], typed intermediate lan- guages [26], and typed assembly languages [12,13] have all been used to prove properties of programs generated by a compiler. However, the kinds of prop- erties that these approaches have typically guaranteed are type safety and
+
+
+memory safety. In our work, we prove the stronger property of semantic equivalence between the original and resulting programs.
+
+Conclusion
+We have overviewed the Cobalt project, an approach for automatically proving the correctness of compiler optimizations. Our technique provides the opti- mization writer with a domain-specific language for writing optimizations. Cobalt is both reasonably expressive and amenable to automated correctness reasoning. Using our technique we have proven correct implementations of several optimizations over a realistic intermediate language. Aside from help- ing to ensure the reliability of compilers, Cobalt is a promising step toward the goal of user-extensible compilers, which would allow programmers to easily and safely add unusual or domain-specific analyses and optimizations.
+
+Acknowledgments
+This research is supported in part by NSF grants CCR-0073379 and ACI- 0203908, a Microsoft Graduate Fellowship, an IBM Faculty Development Award, and by gifts from Sun Microsystems.
+
+References
+Chambers, C., J. Dean and D. Grove, Frameworks for intra- and interprocedural dataflow analysis, Technical Report UW-CSE-96-11-02, University of Washington (1996).
+Cousot, P. and R. Cousot, Abstract interpretation: A uniﬁed lattice model for static analysis of programs by construction or approximation of ﬁxpoints, in: Conference Record of the Fourth ACM Symposium on Principles of Programming Languages, Los Angeles CA, 1977, pp. 238– 252.
+Cousot, P. and R. Cousot, Systematic design of program analysis frameworks, in: Conference Record of the Sixth ACM Symposium on Principles of Programming Languages, San Antonio TX, 1979, pp. 269–282.
+Cousot, P. and R. Cousot, Systematic design of program transformation frameworks by abstract interpretation, in: Conference Record of the 29th ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages, Portland OR, 2002.
+Guttman, J., J. Ramsdell and M. Wand, VLISP: a veriﬁed implementation of Scheme, Lisp and Symbolic Compucation 8 (1995), pp. 33–110.
+Kauffmann, M. and R. Boyer, The Boyer-Moore theorem prover and its interactive enhancement, Computers and Mathematics with Applications 29 (1995), pp. 27–62.
+Lacey, D., N. D. Jones, E. V. Wyk and C. C. Frederiksen, Proving correctness of compiler optimizations by temporal logic, in: Conference Record of the 29th ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages, Portland OR, 2002.
+
+
+Lerner, S., D. Grove and C. Chambers, Composing dataflow analyses and transformations, in: Conference Record of the 29th ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages, Portland OR, 2002.
+Lerner, S., T. Millstein and C. Chambers, Automatically proving the correctness of compiler optimizations, in: Proceedings of the ACM SIGPLAN 2003 conference on Programming language design and implementation (2003), pp. 220–231.
+McCarthy, J. and J. Painter, Correctness of a compiler for arithmetic expressions, in: T. J. Schwartz, editor, Proceedings of Symposia in Applied Mathematics, 1967.
+Morris, F. L., Advice on structuring compilers and proving them correct, in: Conference Record of the 1st ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages, Boston MA, 1973.
+Morrisett, G., K. Crary, N. Glew, D. Grossman, R. Samuels, F. Smith, D. Walker, S. Weirich and S. Zdancewic, TALx86: A realistic typed assembly language, in: 1999 ACM SIGPLAN Workshop on Compiler Support for System Software, Atlanta GA, 1999, pp. 25–35.
+Morrisett, G., D. Walker, K. Crary and N. Glew, From System F to Typed Assembly Language, ACM Transactions on Programming Languages and Systems 21 (1999), pp. 528–569.
+Necula, G. C., Proof-carrying code, in: Conference Record of the 24th ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages, Paris, France, 1997.
+Necula, G. C., Translation validation for an optimizing compiler, in: Proceedings of the ACM SIGPLAN Conference on Programming Language Design and Implementation, Vancouver, Canada, 2000, pp. 83–95.
+Necula, G. C. and P. Lee, The design and implementation of a certifying compiler, in: Proceedings of the ACM SIGPLAN ’98 Conference on Programming Language Design and Implementation, Montreal, Canada, 1998.
+Oliva, D. P., J. Ramsdell and M. Wand, The VLISP veriﬁed PreScheme compiler, Lisp and Symbolic Computation 8 (1995), pp. 111–182.
+Philipose, M., C. Chambers and S. Eggers, Towards automatic construction of staged compilers, in: Conference Record of the 29th ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages, Portland OR, 2002.
+Pnueli, A., M. Siegel and E. Singerman, Translation validation, in: Tools and Algorithms for Construction and Analysis of Systems, TACAS ’98, Lecture Notes in Computer Science 1384, 1998, pp. 151–166.
+Rinard, M., Credible compilation, Technical Report MIT-LCS-TR-776, Massachusetts Institute of Technology (1999).
+Rinard, M. and D. Marinov, Credible compilation, in: Proceedings of the FLoC Workshop Run- Time Result Veriﬁcation, 1999.
+Schmidt, D. A., Dataflow analysis is model checking of abstract interpretations, in: Conference Record of the 25th ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages, San Diego CA, 1998.
+Schmidt, D. A. and B. Steffen, Data flow analysis as model checking of abstract interpretations, in: G. Levi, editor, Proceedings of the 5th International Symposium on Static Analysis (SAS), Lecture Notes in Computer Science (LNCS) 1503 (1998), pp. 351–380.
+Steffen, B., Data flow analysis as model checking, in: T. Ito and A. Meyer, editors, Theoretical Aspects of Computer Science (TACS), Sendai (Japan), Lecture Notes in Computer Science (LNCS) 526 (1991), pp. 346–364.
+Steffen, B., Generating dataflow analysis algorithms for model speciﬁcations, Science of Computer Programming 21 (1993), pp. 115–139.
+
+
+Tarditi, D., G. Morrisett, P. Cheng, C. Stone, R. Harper and P. Lee, TIL: A type-directed optimizing compiler for ML, in: Proceedings of the ACM SIGPLAN ’96 Conference on Programming Language Design and Implementation, Philadelphia PA, 1996.
+Whitfield, D. and M. L. Soffa, The design and implementation of Genesis, Software Practice and Experience 24 (1994), pp. 307–325.
+Whitfield, D. L. and M. L. Soffa, An approach for exploring code improving transformations, ACM Transactions on Programming Languages and Systems 19 (1997), pp. 1053–1084.
+Young, W. D., A mechanically veriﬁed code generator, Journal of Automated Reasoning 5
+(1989), pp. 493–518.

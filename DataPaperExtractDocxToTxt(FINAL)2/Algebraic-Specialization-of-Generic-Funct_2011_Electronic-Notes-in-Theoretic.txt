@@ -1,0 +1,375 @@
+
+
+Electronic Notes in Theoretical Computer Science 229 (5) (2011) 57–74
+www.elsevier.com/locate/entcs
+
+Algebraic Specialization of Generic Functions for Recursive Types
+Alcino Cunha1 and Hugo Pacheco2
+Dep. de Informatica (Centro de Ciˆencias e Tecnologias da Computa¸c˜ao), Universidade do Minho, Campus de Gualtar, P-4710-057, Braga, Portugal
+
+Abstract
+Defining functions over large, possibly recursive, data structures usually involves a lot of boilerplate. This code simply traverses non-interesting parts of the data, and rapidly becomes a maintainability problem. Many generic programming libraries have been proposed to address this issue. Most of them allow the user to specify the behavior just for the interesting bits of the structure, and provide traversal combinators to “scrap the boilerplate”. The expressive power of these libraries usually comes at the cost of efficiency, since runtime checks are used to detect where to apply the type-specific behavior.
+In previous work we have developed an effective rewrite system for specialization and optimization of generic programs. In this paper we extend it to also cover recursive data types. The key idea is to specialize traversal combinators using well-known recursion patterns, such as folds or paramorphisms. These are ruled by a rich set of algebraic laws that enable aggressive optimizations. We present a type-safe encoding of this rewrite system in Haskell, based on recent language extensions such as type-indexed type families.
+Keywords: Generic programming, Recursion patterns, Rewrite systems, Specialization, Type families
+
+
+Introduction
+Modeling real-world problems in a functional language typically leads to a large set of recursive data types, each with a lot of different constructors. That is the case, for example, when developing language processing tools, where grammars are repre- sented using a different data type for each non-terminal and a different constructor for each production rule. Similarly, schema-aware XML processing usually involves mappinga huge schema to an equivalent data type, with each of the many elements mapped to a different type. Such proliferation of data types makes it hard to im- plement even conceptually simple functions, that manipulate a very small subset of the data constructors.
+
+1 Email: alcino@di.uminho.pt
+2 Email: hpacheco@di.uminho.pt
+
+1571-0661 © 2011 Elsevier B.V. Open access under CC BY-NC-ND license.
+doi:10.1016/j.entcs.2011.02.016
+
+A classic (but still benign) example used to illustrate this problem is the so called “paradise benchmark” [13]. Suppose one has a XML schema to model a company with several departments, each having a name, a manager and a collection of employees or sub-departments. This schema could be represented by the following Haskell data type.
+data Company = C [Dept ]
+data Dept = D Name Manager [Either Employee Dept ]
+data Employee = E Person Salary data Person = P Name Address data Salary = S Int
+type Manager = Employee
+type Name = String
+type Address = String
+Suppose one also wants to define a function to increase all salaries by a fixed amount k . A possible definition of this function could be
+increase :: Int → Company → Company increase k (C ds)= C (map (incD k ) ds)
+where incD k (D nm mgr us)= D nm (incE k mgr ) (map (incU k ) us) incU k (Left e)	= Left (incE k e)
+incU k (Right d )= Right (incD k d ) incE k (E p s)= E p (incS k s) incS k (S s)= S (s + k )
+Even this rather simple definition is filled with boilerplate code, whose only pur- pose is to perform a standard traversal of the Company data type to find salaries to increase. Apart from aesthetical reasons, this kind of boilerplate has some major drawbacks: (1) it makes code understanding rather difficult, since the only inter- esting functions (in this case incS ) are lost amid bucketloads of uninteresting code; and (2) it rapidly becomes a maintainability problem, since each model evolution implies changes to many functions that are only concerned with parts of the model not affected by the evolution.
+Many generic programming libraries have been proposed to address this issue. Most of them allow the user to specify the behavior just for the interesting bits of the structure, and provide traversal combinators to encode the remaining boilerplate. One of the most successful libraries is the conveniently named “Scrap you Boiler- plate” (SYB), first introduced in [13] and subsequently extended with additional functionalities [14]. Using this library, the increase function could be redefined as follows.
+increase :: Int → Company → Company increase k = everywhere (mkT (incS k ))
+where incS k (S s)= S (s + k )
+
+The everywhere combinator traverses a data structure in bottom-up fashion, apply- ing the given generic transformation to all its nodes. The mkT combinator builds a generic transformation from a type specific one: given a function f :: a → a, mkT f behaves like f for all values of type a and like the identity function otherwise. Be- sides being much easier to understand what increase does, its definition will stay the same even if the Company data type changes.
+Unfortunately, the obvious advantages provided by this style of generic pro- gramming come at a price: the performance of generic functions is much worse than analogous non-generic ones. In [18], the SYB implementation of a standard set of benchmark functions was reported to run 7 times slower in average than the non-generic implementation. Part of this performance loss is due to the run-time checks needed to determine at each node whether to apply specific or generic be- havior. The remaining is due to structural reasons inherent to this style of generic programming: the traversal combinators must blindly traverse the whole data struc- ture, even if a certain branch does not mention types where the specific behavior applies.
+Some new SYB-like generic programming libraries have been proposed to address this efficiency problem. According to a recent survey [20], two of the most efficient are Uniplate [18] and Smash [11]. The former outperforms SYB by restricting the power of the traversal combinators. The latter offsets some of the run-time checks to compile-time, but needs extra work from the programmer in order to support new data types.
+In previous work [7], we have taken a different approach to tackle this problem: we developed a rewrite system that specializes generic functions for specific types. This specialization proceeds in two phases: (1) the generic functions are specialized to non-optimized point-free definitions; (2) these definitions are then optimized using standard algebraic laws for point-free combinators. The major drawback of that approach was the lack of support for user defined recursive types, such as the Company type above.
+The major contribution of this paper is to extend that specialization mechanism to also cover recursive data types. More specifically, we will focus on inductive data types that can be defined as fixpoints of functors. The key idea is to special- ize traversal combinators using well-known recursion patterns for inductive types, such as folds or paramorphisms. Likewise to standard point-free combinators, these recursion patterns are also characterized by a rich set of algebraic laws that en- able further optimizations after specialization. Most of the definitions that result from the new rewrite system have runtimes close to the hand-written non-generic ones. Another contribution is the Haskell encoding of these new laws: thanks to recent language extensions such as type-indexed type families, we managed to get an implementation that closely mimics the theory.
+Section 2 briefly surveys the SYB approach to generic programming and recaps our previous work on the specialization of generic functions for non-recursive types. Section 3 extends this work with new algebraic rules for the specialization for re- cursive types. Section 4 discusses how these new rules can be accommodated in a
+
+type-safe rewrite system implemented in Haskell. Section 5 presents specialization examples and compares the respective speedups. Section 6 presents related work, and Section 7 makes some concluding remarks, including some future work ideas.
+Specialization for Non-recursive Types
+In this paper we will focus on a limited set of combinators that capture the essence of strategic generic programming libraries like SYB. Generic functions come in two flavors: type-preserving (transformations) and type-unifying (queries). For defining type-preserving functions we have the following combinators:
+nop	:: T
+(D)	:: T → T → T
+gmapT	:: T → T everywhere :: T → T
+mkTA	:: (A → A) → T
+apTA	:: T → (A → A)
+In the SYB library, the type T of type-preserving generic functions is defined as
+∀a. Data a ⇒ a → a. Type classes like Data are extensively used in SYB to infer type representations for data types. Among others, these are necessary in the definition of mkT to determine where the type-specific transformation should be applied. To simplify the presentation, instead of using type classes, we will parameterize mkT with an explicit type representation. Besides everywhere, we have combinators to map a transformation over all direct children of node (gmapT ), to sequence transformations (D), and to denote the identity transformation (nop). We also have an explicit combinator to apply a generic transformation to a particular type (apT ). In SYB this is done implicitly via type-classes. The transformation to increase all salaries would now be written as follows.
+increase :: Int → Company → Company
+increase k = apTCompany everywhere (mkTSalary (incS k ))
+where incS k (S s)= S (s + k )
+For defining type-unifying functions we have the following combinators:
+∅	:: Q R 
+(∪)	:: Q R → Q R → Q R 
+gmapQ	 :: Q R → Q R everything :: Q R → Q R mkQA	:: (A → R) → Q R apQA	:: Q R → (A → R)
+In this case, Q R represents the type of generic queries with result type R. Once more, to simplify the presentation of the specialization laws we will assume that R is a monoid, with a zero element and an associative plus operator. In practice,
+
+
+
+id	:: A → A
+(◦) :: (B → C ) → (A → B ) → (A → C )
+π1	:: A × B → A
+π2	:: A × B → B
+(Δ) :: (A → B ) → (A → C ) → (A → B × C )
+×	:: (A → B ) → (C → D ) → (A × C → B × D )
+i1	:: A → A + B
+i2	:: B → A + B
+(∇) :: (A → C ) → (B → C ) → (A + B → C )
+(+) :: (A → B ) → (C → D ) → (A + C → B + D )
+Fig. 1. Point-free combinators.
+this makes little difference since most typical results, namely lists and integers, are indeed monoids. mkQA creates a generic query out of a type-specific one, returning zero for types other than A. everything collects all results in a bottom-up traversal using the plus operator. gmapQ collects the results of applying a query to all direct children, ∪ sums the results of two queries, and ∅ denotes the query that always returns zero. To apply a generic query to a particular type we have apQ. For example, to compute the total salary bill of a company we could define the following generic query:
+salaries :: Company → Int
+salaries = apQCompany everything (mkQSalary billS )
+where billS (S s)= s
+In previous work [7] we have presented a rewrite system to specialize generic func- tions to type-specific point-free definitions. In the point-free style of programming, functions are composed using a standard set of higher-order combinators, avoiding the need to explicitly mention the domain points as variables. This variable-free style (popularized by John Backus in his 1977 Turing award lecture [2]) is partic- ularly amenable for program calculation since its combinators are characterized by a rich set of algebraic laws. We use a rather standard set of point-free combinators for handling products and sums (see Figure 1). Their behavior should be clear from the type signatures. For more information about the laws ruling this combinators and point-free program calculation in general see [9,5].
+Most user defined data types can be defined as the fixpoint of a regular functor. The base functor that captures the signature of a data type A will be denoted FA (when the type A is clear from the context we will often omit it from the subscript). A regular functor is either the identity functor Id , the constant functor A (that always returns A), the lifting of the sum ⊕ and product bifunctors ⊗, or the composition ⊙ of functors. For example, for lists we have F[ A ] = 1 ⊕ A ⊗ Id . If the type is not recursive, its base functor will not have any identity. For example, F(Maybe A) = 1 ⊕ A. Associated with each data type A we also have two unique functions inA : FA A → A and outA :: A → FA A, that are each other’s inverse. They allow us to encode and inspect values of the given type, respectively.
+
+
+
+apTA nop = id	nop-Apply
+apTA (f D g )= apTA f ◦ apTA g	D-Apply
+
+apTA (gmapT f )= id, if A base type
+apTA (gmapT f )= inA ◦ apTF A f ◦ outA, if A datatype
+	gmapT -Apply
+
+apTA (everywhere f )= apTA (gmapT (everywhere f ) D f )	everywhere-Apply
+
+apTA (mkTA f )= f
+apTA (mkTB f )= id, if A /≡ B
+	mkT -Apply
+
+apTA×B f = apTA f × apTB f	×-Apply
+apTA+B f = apTA f + apTB f	+-Apply
+apT 1 f = id	1-Apply
+
+Fig. 2. Laws for specializing generic transformations.
+Figure 2 presents the laws used to specialize type-preserving combinators into point-free. Specialization proceeds by pushing down the apT combinator until it gets consumed by the mkT -Apply law. Similar laws exist for the type-unifying combinators. Although not generic, the definitions produced by the specialization phase are very inefficient because they still traverse the whole data structure. How- ever, using point-free program calculation laws they can be optimized in order to eliminate redundant traversals. Notice that the everywhere-Apply law uses the recursive definition of this traversal combinator using gmapT and D. Since the pre- vious rewrite system only handled non-recursive user defined data types, this law did not pose any termination problems. However, for recursive types it cannot be used since it would lead to an infinite expansion of the definition (due to successive expansions of everywhere in recursive occurrences of the type).
+Specialization for Recursive Types
+The key to avoid infinite expansions is to specialize traversal combinators using an alternative definition based on standard recursion patterns such as folds. Likewise to point-free combinators, these recursion patterns are characterized by powerful algebraic laws, that will enable us to optimize the specialized definitions. For a comprehensive presentation of most standard recursion patterns and the respective laws see [17].
+The standard recursion pattern of iteration, usually known as fold or catamor- phism, consumes an inductive type by replacing its constructors with a given argu- ment function. For an inductive type A, given a function g ::F B → B , (|g|)A::A → B denotes a fold over that type that produces values of type B . Its recursive definition can be clearly depicted in the following diagram.
+A  outA  F A
+
+(|g|)A
+J 
+F (|g|)A
+J 
+
+B ¸,  F B
+While folds can express functions defined by iteration, paramorphisms can ex-
+
+
+
+(|inA|)A = id	reflex -Cata
+(|g|)A ◦ inA = g ◦ F (|g|)A	cancel -Cata
+f ◦ (|g|)A = (|h|)A ⇐ f ◦ g = h ◦ F f	fusion-Cata
+(|in[ A ] ◦ (id + f × id )|)[ A ] = map f	map-Cata
+⟨|inA ◦ F π1|⟩A = id	reflex -Para
+⟨|g|⟩A ◦ inA = g ◦ F (⟨|g|⟩A Δ id )	cancel -Para
+f ◦ ⟨|g|⟩A = ⟨|h|⟩A ⇐ f ◦ g = h ◦ F (f × id )	fusion-Para
+⟨|f ◦ F π1|⟩A = (|f |)A	cata-Para
+
+Fig. 3. Some laws for folds and paramorphisms.
+press all functions that can be defined by primitive recursion [16]. In practice, this means that the result can depend not only on the recursive result, but also on the recursive occurrence of the type. For an inductive type A, given a function g :: F (B × A) → B , ⟨|g|⟩A :: A → B denotes a paramorphism over that type that produces values of type B . Again, its recursive definition can be expressed by a diagram.
+A  outA  F A F (id Δ id ) F (A × A)
+
+
+×|g|⟩A
+J 
+F (×|g|⟩A ×id )
+J 
+
+B ¸,	g
+F (B × A)
+
+Notice how a copy of the recursive occurrence is made before the recursive invoca- tion. For optimization of functions defined as folds and paramorphisms we will use the laws presented in Figure 3.
+When applied to an inductive type, the bottom-up traversal everywhere will be specialized into a fold over that type. The everywhere-Apply law will now be defined as follows.
+apTA (everywhere f )= (|apT A f ◦ inA ◦ apTF A (everywhere f )|)A
+The behavior of this fold is better understood with the help of the following diagram:
+A 	outA	 F A
+
+(|·|)A
+J 
+F (|·|)A
+J 
+
+A ¸,  A ¸,  F A ¸,	 F A
+
+apT A f
+inA
+apT F A (everywhere f )
+
+The intent of the function apTF A (everywhere f ) is to apply the transformation to all content of the type, apart from its recursive occurrences (which were already processed recursively by the fold itself). This behavior is achieved by adding the following law to the set presented in Figure 2:
+apTA f = id	rec-Apply
+This law guarantees that a type marked with an overline is ignored by the apT combinator. For example, for lists apTF A (everywhere f ) would be instantiated as apT 1+A× [ A ] (everywhere f ), which is equivalent to id + apTA (everywhere f ) × id .
+
+Since everywhere f is a bottom-up traversal, after transforming both the re- cursive occurrences and the remaining content, f still needs to be applied to the resulting value. To do so, inA is first used to reconstruct a value of type A, followed by an application of apTA f .
+To exemplify the specialization of a generic transformation to a recursive type,
+consider the following example, where f = mkTInt succ:
+apT [ Int ] (everywhere f )
+= {everywhere-Apply }
+(|apT [ Int ] (mkTInt succ) ◦ in[ Int ] ◦ apTF [ Int ] (everywhere f )|)[ Int ]
+= {mkT -Apply; +-Apply;×-Apply; rec-Apply }
+(|id ◦ in[ Int ] ◦ (id + apT Int (everywhere f ) × id )|)[ Int ]
+= {everywhere-Apply }
+(|in[ Int ] ◦ (id + apT Int (gmapT (everywhere f ) D f ) × id )|)[ Int ]
+= {D-Apply; gmapT -Apply }
+(|in[ Int ] ◦ (id + (id ◦ apT Int (mkTInt succ)) × id )|)[ Int ]
+= {mkT -Apply }
+(|in[ Int ] ◦ (id + succ × id )|)[ Int ]
+= {map-Cata}
+map succ
+As expected, if f is applied to a type that does not contain integers the result is the identity function:
+apT [ Char ] (everywhere f )
+= {...}
+(|in[ Char ] ◦ (id + (id ◦ apTChar (mkTInt succ)) × id )|)[ Char ]
+= {mkT -Apply }
+(|in[ Char ] ◦ (id + id × id )|)[ Char ]
+= {id × id = id ; id + id = id }
+(|in[ Char ]|)[ Char ]
+= {reflex -Cata}
+id
+The bottom-up everything combinator will be specialized into a paramorphism:
+apQA (everything f )= 
+⟨|plus ◦ (apQFR (everything f ) × apQA f ) ◦ (F π1 Δ inA ◦ F π2)|⟩A
+Again, this paramorphism is easier to understand with a diagram:
+A 	outA	 F A 	F (id Δ id )	 F (A × A)
+
+×|·|⟩A
+J 
+F (×|·|⟩A ×id )
+J 
+
+R ¸,  R × R ¸,	 F R × A ¸,	 F (R × A)
+
+plus
+apQFR (everything f ) ×apQA f
+F π1 Δ inA◦F π2
+
+After recursion, the input value is reconstructed using inA in order to feed it to the generic query. Simultaneously, the query is applied to the non-recursive type contents, and finally both results are put together with the monoid plus operator.
+Encoding in Haskell
+In order to harness the above algebraic laws into a type-safe rewrite system for the specialization of generic functions, we must provide type-safe representations for both functions and types. For functions we will use the same representation presented in [7], based on a generalized algebraic data type (GADT) [19]:
+data PF a where
+Id	:: PF (a → a)
+(Δ) :: PF (a → b) → PF (a → c) → PF (a → (b, c))
+(×)	:: PF (a → b) → PF (c → d ) → PF ((a, c) → (b, d )) (∇) :: PF (a → c) → PF (b → c) → PF (Either a b → c)
+(+) :: PF (a → b) → PF (c → d ) → PF (Either a c → Either b d )
+mkT :: Type a → PF (a → a) → PF T
+apT :: Type a → PF T → PF (a → a)
+...
+
+This type contains both point-free combinators and SYB combinators. Generic transformations and queries have the following types:
+type T = ∀a. Type a → a → a
+type Q r = ∀a. Type a → a → r
+Instead of using type classes to infer type representations, these are explicitly passed to generic functions. Type representations are also defined using a GADT. For base types, sums and products, Type a can be defined as follows.
+data Type a where Int	:: Type Int Char :: Type Char
+...
+Sum :: Type a → Type b → Type (Either a b) Prod :: Type a → Type b → Type (a, b)
+Func :: Type a → Type b → Type (a → b)
+One consequence of using a GADT to encode the combinators is the ability to define an evaluation function eval :: PF a → a. For example, the evaluation of mkT follows closely the SYB semantics:
+eval (mkT a f )= λbx → case teq a b of Just Eq → eval f x
+Nothing → x
+
+The resulting generic function behaves as f if applied to a value of type a, or as the identity function otherwise. Function teq tests equality of type representations, and is nowadays a classical example of the usefulness of GADTs [19]:
+data Equal a b where Eq :: Equal a a
+teq :: Type a → Type b → Maybe (Equal a b) teq Int Int = return Eq
+teq (Sum a b) (Sum c d )= do Eq → teq a c
+Eq → teq b d return Eq
+...
+teq   = Nothing
+The constructor Eq of the Equal GADT can be seen as a proof that types a and b
+are indeed equal.
+The representation of user defined recursive types follows directly from the the- oretical definition given in Section 2. For each type A we need to represent its base functor F A. When applying a functor to another type we want to get a sum of products as result, capable of being processed with point-free combinators. If functors are defined with normal Haskell polymorphic data types, it is impossi- ble to obtain this behavior, since type-equivalence in Haskell is not structural but name-based.
+In order to overcome this problem, we decided to represent functors using type- indexed type families [21,3], a new extension to the Haskell type system already supported in GHC. Developed with type-level programming in mind, type families are type constructors that represent sets of types. Set members are aggregated according to the type parameters passed to the type family constructor, called type indices: family constructors can have different representation types for different type indices. A type family to represent functors can defined as follows.
+type family F ax :: ∗
+In this definition a is the type index that stands for the type whose functor is being defined, and x is the type argument of the functor itself. For example, for lists we have the following instance:
+type instance F [a ] x = Either One (a, x )
+The GADT that represents functions can now be extended with constructors for the recursion patterns, together with the in and the out functions.
+data PF a where
+...
+In	:: PF (F aa → a) Out :: PF (a → F a a)
+
+Cata :: PF (F ac → c) → PF (a → c) Para :: PF (F a (c, a) → c) → PF (a → c)
+In our rewrite system we will need to apply a functor both to type and function representations. Using the above type family, we can capture this behavior in the following data type, that represents the functor of an inductive type a.
+data Functor a = Functor{mapT :: ∀b. Type b → Type (F a b),
+mapF :: ∀x y. PF (x → y ) → PF (F a x → F a y)}
+Our type representation can now be extended with a new constructor to repre- sent user defined recursive types.
+data Type a where
+...
+Data :: String → Functor a → Type a
+Given a ground type a, it is possible to use the Haskell type system to infer its representation. We can define a class with all representable types:
+class Typeable a where
+typeof :: Type a
+For example, for lists the Typeable instance can be defined as follows:
+instance Typeable a ⇒ Typeable [a ] where
+typeof = Data name functor
+where name = "[" ++ show (typeof :: Type a) ++ "]"
+functor = Functor{mapT = λb → Sum One (Prod typeof b),
+mapF = λf → Id + (Id × f )}
+In order to guarantee that the rewrite system is type-safe, rewrite rules are represented by a monadic function that takes a function representation and returns a representation of the same type.
+type Rule = ∀a. Type a → PF a → RewriteM (PF a)
+RewriteM is a stateful monad that keeps a trace of the applied rules and is an instance of MonadPlus, thus modeling partiality in rule application. The extra type representation passed as argument allows the rule to make type-based rewriting decisions.
+Both the specialization laws of Figure 2, and the point-free optimization laws (such as the ones presented in Figure 3 for folds and paramorphisms) are encoded as rewrite rules. For example, the reflexivity rule for folds can be defined as follows.
+reflex Cata :: Rule
+reflex Cata (Func a b) (Cata In)= do Eq → teq a b
+
+success "reflex-Cata" Id
+reflex Cata   = mzero
+This rule uses teq to guarantee that is only applied to functions of type a → a. The monadic function success updates the RewriteM monad to keep trace of the successful reduction.
+Rewrite systems are built from basic rules using a standard set of strategic com- binators. There are two main top-level strategies: optimize syb for specialization of type-preserving and type-unifying generic programs into point-free expressions; and optimize pf for simplification and optimization of point-free definitions. The latter also applies some “beautifying” rules to produce more concise results.
+Examples
+We will now present some specialization examples, and compare the performance between the resulting definitions and the original SYB functions.
+The first example is the generic transformation to increase all salaries. In order to increase the readability of the specialized point-free definitions, we will consider that the type-specific behavior is for the Employee type instead of Salary . In SYB we have the following definition.
+increase :: Int → Company → Company increase k = everywhere (mkT (incE k ))
+where incE k (E p (S s)) = E p (S (s + k ))
+After encoding this definition using type PF a, and applying the specialization and optimization strategies, we get the following definition, where C stands for Company and D for Dept .
+inC ◦ map (|inD ◦ (id × (incE k × map (incE k + id )))|)D ◦ outC
+This definition is a pretty-print of the respective representation in PF a. It approx- imates the hand-written presented in Section 1: the fold will be recursively applied to each department of a company; at each department both the manager and all direct employees will have their salaries increased by the function incE k .
+The second example, presented before in Section 2, addresses the specialization of a generic query to compute the total salary bill of a company.
+salaries :: Company → Int
+salaries k = everything (mkQ billE )
+where billE (E p (S s)) = s
+In this case we get the following definition.
+sum ◦ map (|plus ◦ (billE × (sum ◦ map (billE ∇ id )) ◦ π2)|)D ◦ outC
+Note how the paramorphism was simplified as a fold, since the query does not mention the recursive type Dept . The expression sum ◦ map (billE ∇ id ) collects
+
+all salaries from the direct employees of a department, and all recursively computed salaries from sub-departments. This result is then summed with the salary of the manager to compute the total salary bill. The expression sum ◦ map f was used in this example just to make the result more readable. In fact, they are fused together as a single fold by the rewrite system.
+The last example combines the two previous examples into a single function:
+higher salaries :: Int → Company → Int higher salaries k = salaries ◦ increase k
+Although the two operations are performed in sequence in the original query, after specialization we get a result very similar to the previous one, with a single traversal over the type.
+let aux = billE ◦ incE k
+in sum ◦ map (|plus ◦ (aux × (sum ◦ map (aux ∇ id )) ◦ π2)|)D ◦ outC
+Unlike systems specially designed to implement fusion (such as [23]), our rewrite system cannot implement the full power of the fusion laws. However it covers most of the particular instances that occur during the specialization of generic functions. For example, the above optimization was possible due to the following instance of fusion-Cata.
+(|f |)A ◦ (|inA ◦ g|)A = (|f ◦ g|)A ⇐ F (|f |)A ◦ g = g ◦ F (|f |)A
+To verify the side-condition of this law, we first apply the rewrite system optimize pf
+to F (|f |)A ◦ g and g ◦ F (|f |)A, and then check for syntactic equality.
+
+Performance analysis
+We have compared the runtimes of the first two examples for hand-written, specialized, and generic definitions written in SYB and Uniplate. The results are presented in Figure 4. A large part of SYB’s inefficiency is due to the heavy use of type-classes to infer type representations. To factor out this penalty, and better quantify the speedup achieved by our specialization mechanism, we also include the runtimes of both generic functions obtained by evaluating their representation using the eval function presented in section 4 (denoted in the graphic as SYB GADT). We compiled each function using GHC 6.8.2 with optimization flag O2. Each example was tested with Company values of increasing size (measured in kBytes needed to store the Haskell definition of each value).
+As expected, for both examples, the SYB generic definitions perform much worse than the hand-written, and the loss factor grows with the database size. The SYB GADT variant is at least twice as fast, but still much slower than the hand-written. The specialized point-free definitions perform closer to the hand-written, with loss factors of 1.11 (increase 100) and 2.85 (salaries) for the biggest sample. This per- formance loss is mainly due to the use of in and out to convert between user defined types and they structural representation as a sum of products. For these particular
+
+
+
+
+Fig. 4. Timing results.
+examples, the performance of the specialized point-free code is tangentially better than Uniplate. As discussed in the next section, Uniplate also has some mechanisms to avoid traversing unnecessary branches, which justify the proximity in the results. Although quite standard when comparing generic programming libraries, these example are not particularly flattering to our optimization mechanism: in fact, there are no large branches of data that can be avoided in the traversals. For example, if the Company data type had any other information besides departments (not con- taining the type Salary ), the runtime would remain the same, further widening the gap to SYB. We also achieve a significant advantage when optimizing compositions of generic functions: for example, in the higher salaries example our specialized point-free definition was already 1.35 times faster than Uniplate for the biggest
+sample.
+Related Work
+Uniplate
+Unlike SYB, some generic programming libraries have been designed with per- formance issues in mind, usually at the cost of expressiveness. One such library is Uniplate [18], that is among the fastest libraries currently available for generic programming in Haskell [20]. That fact, together with the SYB-like flavor of its com- binators, motivated an obvious inclusion in the comparative performance analysis of the previous section. The key idea behind Uniplate is that most generic traversals have value-specific behavior for just one type. Building on this insight, this library provides two key combinators to specify bottom-up generic transformations:
+transform :: Uniplate a ⇒ (a → a) → a → a transformBi :: Biplate b a ⇒ (a → a) → b → b
+The transform combinator applies its argument to every a occurring inside a value of type a, while transformBi applies its argument to every a occurring inside a value of a different type b. Recalling our examples, the increase transformation can be defined using transformBi , since it looks for all salaries inside a company. The
+
+Uniplate and Biplate classes contain primitive methods to find the substructures of type a inside values of type a and b, respectively. Instances of these classes can be defined using a variety of methods, ranging from more generic and less efficient to more verbose and more efficient. The most efficient method (used in the comparison of the previous section) is to define the instances by hand, which for Biplate requires defining n2 instances to support n types. When defining instances for Biplate b a it is possible to avoid traversing down branches of a that do not contain the target type b, thus optimizing generic traversals.
+The main advantage of Uniplate is that generic functions execute fast out of the box, without the need of an explicit optimization phase. On the other hand, likewise to SYB, our optimization technique can handle more powerful combinators, that target different types in a single traversal. Using fusion techniques, our approach can also further optimize combinations of traversals, while Uniplate speedups are constrained to individual traversals.
+
+Other techniques to optimize generic programs
+Another very efficient SYB-like generic programming library is Smash [11]. In- stead of using run-time checks to find the target types, it offsets them to compile- time by using heterogeneous collections [12] to encode the type-specific cases of generic functions. Unfortunately, the speedup obtained with this technique comes at the cost of extra work from the programmer: in order to support a new data type, all different traversal combinators must be defined from scratch, while in SYB they can all be generically implemented using just two primitive methods.
+A different approach has been followed in [1], where a technique named symbolic evaluation was developed to optimize Generic Haskell programs [15]. It focus on the specialization of fully applied functions and tries to eliminate conversions between types and their structural representations. Symbolic evaluation guarantees that the intermediate structures are completely removed from the optimized code. A similar technique could be used in our framework to further optimize the point-free definitions, via an additional translation step to explicitly recursive point-wise code.
+
+Application scenarios
+As previously mentioned, our main goal was to extend the specialization mech- anism presented in [7] to also cover inductive types. In [7] we already described how it could be used to optimize the structure-shy XPath query language. This technique was harnessed into the prototype schema-aware XPath compiler XPTO [8]. Query compilation in XPTO proceeds as follows: the XML Schema is parsed into a sum of products representation using Type a; the XPath query is parsed into a type-safe representation of type PF a; the rewrite system is used to specialize the query to the given schema; the specialized point-free definition is output into a new Haskell program to be compiled and linked with an XML parser and point-free execution library; the resulting program can then be used to execute the original query against XML files conforming to the given schema. We are currently deploy- ing the new technique presented here into the XPTO compiler in order to handle
+
+some recursive XML Schemas.
+A similar type-safe rewriting system was also used in [6] to optimize two-level data transformations [4]. A two-level data transformation consists of a type-level transformation coupled with value-level transformations of the respective inhabi- tants. More specifically, we developed a framework that allows us to specify data type refinements A ≤ B using strategic combinators, and get for free the migration functions between values of type A and B, and vice-versa. Both the types and the migration functions are again encoded using Type a and PF a, allowing us to use the rewrite system to optimize them, and migrate queries/producers from the abstract type A to the concrete type B . The inclusion of inductive types in the rewrite system will allow us to extend the applicability of this framework.
+
+
+
+Template meta-programming
+We believe that our algebraic approach could be instructed at a lower level to provide compile-time specialization of generic functions, through template meta- programming [22]. This rewriting process would encompass transformation of Haskell generic programs through direct manipulation of their abstract syntax trees. How- ever, since the current implementation of template meta-programming in Haskell is completely untyped, we would loose the guarantee that the rewrite system is type-safe. Template meta-programming could also be used to infer automatically the recursive types’ sum of products representation.
+
+
+Concluding Remarks
+We have extended an existent mechanism to specialize SYB-like generic functions to also cover user defined recursive data types. By focusing on inductive types (fixpoints of functors) we were able to use recursion patterns such as folds and paramorphisms to encode generic traversals. These recursion patterns are charac- terized by nice algebraic laws, that were incorporated in a type-safe rewrite system to further optimize the specialized code. The definitions produced by our specializa- tion mechanism perform close to hand-written non-generic ones. Thanks to recent extensions of the Haskell type-system, such as type-indexed type families or general- ized algebraic data types, our implementation of the rewrite system closely mimics the theoretical presentation.
+The major limitation of the current approach is that it only supports single- recursive inductive types. We are currently investigating how to extend it to cover more general forms of recursion, such as mutually-inductive data types or nested data types. Particularly relevant to this endeavor is the work described in [10], showing that higher-order functors can be used to give an initial algebra semantics to nested data types (likewise to standard inductive types).
+
+References
+Alimarine, A. and S. Smetsers, Optimizing generic functions, in: D. Kozen and C. Shankland, eds., “Proc. of 7th Int. Conf. on Mathematics of Program Construction, MPC 2004 (Stirling, July 2004),” Lecture Notes in Computer Science 3125, Springer, 2004, pp. 16–31.
+Backus, J., Can programming be liberated from the von Neumann style? a functional style and its algebra of programs, Commun. of ACM 21(8) (1978), pp. 613–641.
+Chakravarty, M. M. T., G. Keller and S. Peyton Jones, Associated type synonyms, in: “Proc. of 10th ACM SIGPLAN Int. Conf. on Functional programming, ICFP ’05 (Tallinn, Sept. 2005),” ACM Press, 2005, pp. 241–253.
+Cunha, A., J. N. Oliveira and J. Visser, Type-safe two-level data transformation, in: J. Misra, T. Nipkow and E. Sekerinski, eds., “Proc. of 14th International Symposium on Formal Methods, FM 2006 (Hamilton, Ont., Aug. 2006),” Lecture Notes in Computer Science 4085, Springer, 2006, pp. 284–299.
+Cunha, A., J. S. Pinto and J. Proen¸ca, A framework for point-free program transformation, in:
+A. Butterfield, C. Grelck and F. Huch, eds., “Revised Selected Papers from 17th Int. Wksh. on Implementation and Application of Functional Languages, IFL 2005 (Dublin, Sept. 2005),” Lecture Notes in Computer Science 4015, Springer, 2006, pp. 1–18.
+Cunha, A. and J. Visser, Strongly typed rewriting for coupled software transformation, Electron. Notes in Theor. Comput. Sci. 174(1) (2007), pp. 17–34.
+Cunha, A. and J. Visser, Transformation of structure-shy programs - applied to XPath queries and strategic functions, in: “Proc. of 2007 ACM SIGPLAN 2007 Wksh. on Partial Evaluation and Program Manipulation, PEPM ’07 (Nice, Jan. 2007),” ACM Press, 2007, pp. 11–20.
+Ferreira, F. and H. Pacheco, XPTO - an Xpath preprocessor with type-aware optimization, in: V. Santos,
+P. R. Henriques and S. M. de Sousa, eds., “Proc. of 1st Conf. on Compilers, Related Technologies and Applications, CoRTA ’07 (Covilh˜a, July 2007),” Universidade da Beira Interior, 2007.
+Gibbons, J., Calculating functional programs, in: R. Backhouse, R. Crole and J. Gibbons, eds., “Revised Lectures from Int. Summer School and Wksh. on Algebraic and Coalgebraic Methods in the Mathematics of Program Construction, ACMMPC 2000 (Oxford, Apr. 2000),” Lecture Notes in Computer Science 2297, Springer, 2002, pp. 148–203.
+Johann, P. and N. Ghani, Initial algebra semantics is enough!, in: S. Ronchi Della Rocca, ed., “Proc. of 8th Int. Conf. on Typed Lambda Calculi and Applications, TLCA 2007 (Paris, June 2007),” Lecture Notes in Computer Science 4583, Springer, 2007, pp. 207–222.
+Kiselyov, O., Smash your boilerplate without class and typeable, message to the Haskell mailing list, 2006. Available at http://article.gmane.org/gmane.comp.lang.haskell.general/14086.
+Kiselyov, O., R. L¨ammel and K. Schupke, Strongly typed heterogeneous collections, in: “Proc. of 2004 ACM SIGPLAN Haskell Workshop, Haskell ’04 (Snowbird, UT, Sept. 2004),” ACM Press, 2004, pp. 96– 107.
+L¨ammel, R. and S. Peyton Jones, Scrap your boilerplate: a practical design pattern for generic programming, in: “Proc. of 2003 ACM SIGPLAN Int. Wksh. on Types in Language Design and Implementation, TLDI ’03 (New Orleans, LA, Jan. 2003),” ACM Press, 2003, pp. 26–37.
+L¨ammel, R. and S. Peyton Jones, Scrap your boilerplate with class: extensible generic functions, in: “Proc. of 10th ACM SIGPLAN Int. Conf. on Functional Programming, ICFP ’05 (Tallinn, Estonia, Sept. 2005),” ACM Press, 2005, pp. 204–215.
+L¨oh, A., J. Jeuring, D. Clarke, R. Hinze, A. Rodriguez and J. de Wit, The generic Haskell user’s guide – version 1.42 (Corla), Technical Report UU-CS-2005-004, Universiteit Utrecht, 2005. Available at http://www.cs.uu.nl/research/techreps/UU-CS-2005-004.html.
+Meertens, L., Paramorphisms, Formal Asp. of Comput. 4(5) (1992), pp. 413–424.
+Meijer, E., M. Fokkinga and R. Paterson, Functional programming with bananas, lenses, envelopes and barbed wire, in: J. Hughes, ed., “Proc. of 5th ACM Conf. on Functional Programming Languages and Computer Architecture, FPCA ’91 (Cambridge, MA, Aug. 1991),” Lecture Notes in Computer Science 523, Springer, 1991, pp. 124–144.
+Mitchell, N. and C. Runciman, Uniform boilerplate and list processing, in: “Proc. of 2007 ACM SIGPLAN Haskell Workshop, Haskell’ 07 (Freiburg, Sept. 2007),” ACM Press, 2007, pp. 49–60.
+Peyton Jones, S., D. Vytiniotis, S. Weirich and G. Washburn, Simple unification-based type inference for GADTs, in: “Proc. of 11th ACM SIGPLAN Int. Conf. on Functional Programming, ICFP ’06 (Portland, OR, Sept. 2006),” ACM Press, 2006, pp. 50–61.
+
+
+Rodriguez, A., J. Jeuring, P. Jansson, A. Gerdes, O. Kiselyov and B. C. d. S. Oliveira, Comparing libraries for generic programming in Haskell, Technical Report UU-CS-2008-010, Universiteit Utrecht, 2008. Available at http://www.cs.uu.nl/research/techreps/UU-CS-2008-010.html
+
+Schrijvers, T., S. Peyton Jones, M. Chakravarty, M. Sulzmann, Type checking with open type functions, in: “Proc. of 13th ACM SIGPLAN Int. Conf. on Functional Programming, ICFP ’08 (Victoria, BC, Sept. 2008),” ACM Press, 2008, pp. 51–62.
+Sheard, T. and S. Peyton Jones, Template meta-programming for Haskell, ACM SIGPLAN Notices
+37(12) (2002), pp. 60–75.
+Sittampalam, G. and O. de Moor, Mechanising fusion, in: J. Gibbons and O. de Moor, eds., “The Fun of Programming,” Cornerstones of Computing, Palgrave, 2003, pp. 79–104.

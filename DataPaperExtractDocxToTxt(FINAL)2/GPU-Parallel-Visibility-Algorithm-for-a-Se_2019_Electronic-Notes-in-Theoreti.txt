@@ -1,0 +1,273 @@
+Available online at www.sciencedirect.com
+
+
+Electronic Notes in Theoretical Computer Science 342 (2019) 57–69
+www.elsevier.com/locate/entcs
+
+GPU Parallel Visibility Algorithm for a Set of Segments Using Merge Path
+Kevin Zu´n˜iga G´arate1,2
+Escuela Profesional de Ingenier´ıa de Sistemas Universidad Nacional de San Agust´ın Arequipa, Peru´
+
+Abstract
+In this paper, we present an efficient parallel algorithm for computing the visibility region for a point in a plane among a non-intersecting set of segments. The algorithm is based on the cascading divide-and-conquer technique and uses merge path to evenly distribute the workload between processors. We implemented the algorithm on NVIDIA’s CUDA platform where it performed with a speedup up to 76x with respect to the serial CPU version.
+Keywords: computational geometry, visibility, gpu, nvidia cuda, parallel algorithms, mergesort, divide and conquer
+
+
+Introduction
+Visibility is one of the most important problems in computational geometry, and it is a subproblem of many others, such as finding the shortest path in a plane with obstacles or the hidden line elimination problem. Diverse applications like video games and robotic motion planning have to deal with visibility. In this paper, we will focus on visibility from a point into a set of segments. Our goal is to provide an efficient parallel algorithm for modern parallel architectures such as the ones presented in current GPUs.
+CPUs were getting more powerful in according to Moore’s Law until around 2003 where they started to decline on their clock speed growth. This was due to elevated energy consumption, heat dissipation issues, and in general, various physical limits were being reached; exponential growth cannot go on forever after all [10]. CPU manufacturers like Intel and AMD started to shift towards hyperthreading and
+
+1 The work in this paper has been partially supported by the CiTeSoft research group at the Universidad Nacional de San Agust´ın.
+2 Email: kzunigaga@unsa.edu.pe
+
+https://doi.org/10.1016/j.entcs.2019.04.005 1571-0661/© 2019 Published by Elsevier B.V.
+This is an open access article under the CC BY-NC-ND license (http://creativecommons.org/licenses/by-nc-nd/4.0/).
+
+multicore CPUs to keep the processing power raising. In 2007 NVIDIA released their CUDA parallel computing platform which allowed us to use manycore GPUs for general purpose processing. Today many fields of computer science take advantage of these platforms, however, efficient parallel computing is a requirement not so easy to achieve.
+The visibility problem on GPUs has already been seen by Shoja and Ghodsi [5]. In their work, they give a parallel algorithm to solve the point visibility problem on a simple polygon in O(log n) time with O(n) processors. Our algorithm will solve the problem for a less restricted set of obstacles, a set of non-intersecting segments, taking the same computational time, which is optimal for the visibility of line segments [9].
+Our algorithm is based on the technique given by Atallah et al. [2] for solving computational geometry problems on a divide and conquer paradigm for the CREW- PRAM computational model. We also take several visibility concepts from the work of Asano et al. [1] where they build a data structure to find a visibility graph in O(n2).
+The remainder of this paper is organized as follows. In the next section, we give our definition of visibility region and describe one way to find it. Section 3 gives an overview of the cascading divide and conquer technique. In section 4 we propose the algorithm itself, we give a simple analysis of its time complexity and an explanation of how can it be parallelized using merge path. Section 5 gives some details for its implementation on NVIDIA’s CUDA platform. Section 6 presents the experimental results of our implementation. Finally, conclusions and future works are discussed in section 7.
+Visibility Region
+Let S be a set of n arbitrarily oriented segments on the plane P allowed to intersect only at their endpoints, and let q be an arbitrary query point. The visibility region VS(q) is the set of all points on P that are visible from q [6]. A point p is visible from q if the segment pq does not properly intersect any of the segments in S. We say two segments properly intersect if they share exactly one point and this point lies in the interior of both segments.
+Figure 1 shows a line segment arrangement S,a query point q and the visibility region VS(q). The visibility region VS(q) might be a star-shaped polygon with q belonging to its kernel or it might be an unbounded region [6].
+Finding the visibility region
+To ease the calculations we are going to translate the coordinate system so that q
+becomes the origin.
+Before finding the visibility region we are going to remove from S segments whose endpoints are collinear with q. Collinear segments cannot properly intersect any segment that has q as one of its endpoints so they do not affect the visibility region at all. We are also going to split segments that properly intersect the positive
+
+
+
+
+
+
+
+Fig. 1. Query point q in a line segment arrangement S with its visibility region US (q). The visibility region is a star-shaped polygon.
+
+x-axis. If a segment with endpoints a and b crosses the positive x-axis on point c it is going to be divided into the segments ac and cb. We will call this new set of segments Sq and let nq = |Sq|.
+To explain the previous modification to S we are going do a simple transforma- tion of the coordinate system. Let p be any point on the plane except for the origin. Let us denote θ(p) as the counterclockwise angle from the x-axis at which the point p lies. Let d(p) be the distance between the point p and the origin. We are going to map p to the point (θ(p), d(p)). Figure 2 shows an example of this transform. Observe that a collinear segment with q would be a vertical segment on the trans- formed system and as we mentioned before those do not affect visibility. Also, note that a segment that crosses the positive x-axis would be split in the transformed system since the polar angles of its points would abruptly change from 0 to 2π.
+In [1], Asano et al. establish a binary relation ≺q on the set Sq. For two segments s and sj in Sq we say that s ≺q sj if there exists a ray originated in q that intersects both segments and hits s before sj. In other words, if s ≺q sj this means that sj is partially blocked by s and therefore is not completely visible from q. The part blocked in sj is the one that can be intersected by rays starting at q that also intersect s. See segments c and d in figure 2. This relation is a partial order on the set Sq [3].
+To continue we are going to divide the original plane into angular sectors. Let pi (i = 1,...,N ) be all the endpoints of the segments in Sq, where N ≤ 2nq. Let ϕ be the linearly ordered set of {θ(pi) / (i = 1,...,N )} ∪ {0, 2π}, let nϕ = |ϕ| so
+−→
+that ϕ1 = 0 and ϕnϕ = 2π. Let us also define ri as the ray emanating from q in
+the direction of ϕi. We denote as Λi (i = 1,..., nϕ − 1) the infinite angular sector
+defined between the angles ϕi and ϕi+1.
+
+ϕ2
+ϕ3	b
+
+R2
+a1
+R3
+ϕ4	ϕ1
+q	a2
+R5
+c	d
+ϕ7
+ϕ5
+ϕ6
+Normal
+ϕ1	ϕ2	ϕ3 ϕ4	ϕ5 ϕ6 ϕ7	ϕ8
+
+
+
+
+
+
+
+
+
+
+0	2π
+Transform
+Fig. 2. a. Query point q, a set of segments Sq and its visibility region. Segment a was divided into a1 and a2. Dashed rays represent the angles in ϕ. Regions R2, R3 and R5 have been labeled. Observe that R3 is the infinite region Λ3 and that R5 is intersected by c and d but bounded by d since d ≺ c. b. Transform of elements in a. The horizontal axis is the polar angle θ(p) and the vertical axis is the distance d(p). Note that segments a1 and a2 are no longer next to each other.
+
+Let Zi be the set of segments in Sq that properly intersect the region Λi and let zi be any segment in Zi such that zi ≤q s for all s in Zi. We define Ri as the region Λi clipped by the segment zi, i.e., the triangular area formed by q and the
+intersection points of zi with the rays −→ri and r−−→. In case Zi is empty let Ri = Λi.
+
+On figure 2a you can see the plane divided into 7 regions. Observe that R3 = Λ3 since Z3 is empty, and that Λ5 is properly intersected by segments c and d with d ≺ c so the region R5 is limited by d.
+The visibility region will be the union of all Ri regions, i.e.:
+nϕ−1
+VS(q)=	Ri
+i=1
+Cascading Divide and Conquer
+Cascading divide and conquer is a technique for designing parallel divide and con- quer algorithms by Atallah et al. [2]. This technique can be used to solve many geometric problems, including point visibility. The algorithms run in O(log n) time with O(n) processors in the CREW PRAM model. The technique is based on Cole’s parallel merge sort algorithm [4].
+In the cascading divide and conquer technique we model the solution process as a binary tree. Each node represents a sorted list of some type. For the inner nodes, the list is the sorted merge of their two children in a rather complex way. The starting lists of the leaf nodes depend on the nature of the problem. We find the solution of the problem by merging the nodes in a bottom-up fashion. The root of the tree represents the final solution.
+For the visibility problem, the lists represent a visibility region and store the endpoints of its obstacles, sorted by their polar angle. We also store additional in- formation to identify the closest segment for two consecutive angles, i.e., zi. Figure 3 shows what the tree model for the visibility problem might look like.
+Visibility Merge Algorithm
+In this section, we propose an algorithm based on the cascading divide and conquer technique for the point visibility problem. For simplicity we will assume that the segments have already been translated so the query point is the origin, the collinear segments with the query point have already been removed, and the segments that cross the x-positive axis have already been broken in two. Then we explain how we can query in logarithmic time whether a point is inside the visibility region or not using the resulting data structure. The section ends with an insight on how parallel merge works and how can be used for the parallel version of the algorithm.
+Visibility Merge Algorithm
+Each node of the cascading divide and conquer tree model represents a visibility region for some subset of Sq. To represent this visibility region we will use a list of v-rays. These v-rays represent the rays dividing the plane we saw in section 2. A v-ray is a 4-tuple (ϕ, v, r, l) where
+ϕ is the polar angle,
+
+
+
+
+
+Fig. 3. Cascading divide and conquer tree model for the point visibility problem. Leaf nodes represent the visibility region of a single segment. Inner nodes represent the intersection or merge of the visibility regions of their two children. Root node is the final visibility region of all segments.
+
+ϕi
+
+
+
+Fig. 4. Region defined by two consecutive v-rays. Dashed lines represent the ri and li+1 values, they do not affect the region Ri at all.
+
+v is a unit vector in the direction of ϕ,
+r and l are the distance from q to the endpoints of the segments limiting the angular sector on the right and left side respectively. They take the value of ∞ if there is no segment.
+A pair of consecutive v-rays (ϕi, vi, ri, li) and (ϕi+1, vi+1, ri+1, li+1) with ϕi+1 > ϕi define the region Ri as the triangular area formed by the points q, vi · li and vi+1 · ri+1. See figure 4. In case li and ri+1 are infinite, the region Ri would be the infinite region between the angles ϕi and ϕi+1.
+The first step of the algorithm would be to find the visibility region of every single segment. Algorithm 1 finds the v-rays for the two endpoints of a segment.
+
+
+
+Algorithm 1: Visibility region of a single segment.
+Input: A segment s = (a, b).
+Output: A list of two v-rays representing V{s}(q).
+if |a × b| < 0 then swap(a, b) ϕa → θ(a)
+if θ(b)=0 then ϕb → 2π else ϕb → θ(b) vra → (ϕa, i cos ϕa + j sin ϕa, ∞, d(a)) vrb → (ϕb, i cos ϕb + j sin ϕb, d(b), ∞) return [vra, vrb]
+
+Notice that the endpoints are sorted by their angle, and we handle the special case when the b v-ray has an angle of 0. The v-rays for the angles ϕ = 0 and ϕ = 2π are implicit and have the values of (0, i, ∞, ∞) and (2π, i, ∞, ∞) respectively.
+Once we have the initial visibility regions we need to merge them together, two at a time. The merge is identical to the merge from mergesort with the exception that we need to update the values r and l for each processed v-ray. The r and l values can only decrease, and this happens if there is a segment that limits the region on the right and left side of the v-ray respectively. Let us say that we are merging two v-ray lists A and B, and we are adding the v-ray ai to the merge result, there is only one segment that might limit its right and left regions, the one limiting the region Rj−1 in the visibility region defined by list B, see figure 5. If the segment does not exist, e.g. if the region between bj and bj−1 is infinite, ai would keep its current r and l values. Since there is only one segment we need to check, we can update the r and l values in constant time.
+Algorithm 2 merges two lists of v-rays updating the r and l values as described. Observe that, except for the if condition in the line A, the algorithm is pretty much a regular merge.
+Since the additional operations take constant time to compute, the time com- plexity for the Visibility Merge algorithm is the same as a regular merge, O(n). As in mergesort, in order to merge all the elements we need to do O(log n) passes, each pass taking a total of O(n) time. The final time complexity to find the visibility region is O(n log n).
+
+Querying a point
+In order to query whether a point p is part of the visibility region we can find the angular sector Λi where it belongs and then check if it is inside or outside of the respective Ri region. To find the region we can do a binary search on the final sorted v-ray list with the polar angle of p. Determining if p is inside Ri only requires to check if the distance between q and p is less than or equal to the distance of q and the intersection of the boundary of Ri with the ray started at q on the direction of
+
+
+
+Algorithm 2: Merge two lists of v-rays.
+Input: L1 and L2 lists of v-rays.
+Output: Merged list L. n → |L1| + |L2|
+i → 1, i1 → 1, i2 → 1
+while i ≤ n do
+if i2 > |L2| then k = 1, t =2 
+else if i1 > |L1| then k = 2, t =1 
+else if L1[i1].ϕ ≤ L2[i2].ϕ then k = 1, t =2 
+else k = 2, t =1 
+L[i] → Lk[ik]
+A	if 1 < it ≤ |Lt| and Lt[it].r < ∞ then
+s → segment(Lt[it − 1].v · Lt[it − 1].l, Lt[it].v · Lt[it].r)
+p → intersection of s with the infinite ray originated at the origin on the direction of L[i].ϕ
+L[i].l → min(L[i].l, d(p))
+L[i].r → min(L[i].r, d(p))
+end
+ik → ik +1 
+i → i +1 
+end
+
+p.
+
+Parallel Merge
+Given that this algorithm is so akin to mergesort we can use parallel merge [4] to parallelize it. The way parallel merge works is by splitting the lists to be merged into non-overlapping sublists. Each processor then does a serial merge of the two sublists assigned to it.
+The problem with parallel merge is that the workload is not evenly divided and processors have a different amount of elements to merge. This is not efficient for GPU architectures because threads are grouped in warps that must execute the same instructions, and it could lead to idle threads while others are working. This problem is solved by GPU merge path [7]. Merge path divides the lists into sublists
+
+
+ai
+
+q
+
+Fig. 5. Updating the r and l values of a v-ray. ai is the chosen v-ray to add to the output list. bj and bj−1 are the next and previous v-rays on the other list. The dotted line is the bounding segment of the region Rj−1 in the B list. The dashed gray lines represent the bounding segments for the regions Ri−1 and Ri in the A list. In this example the dotted segment is limiting the Ri−1 region, but not the Ri region.
+
+Single-precision	Double-precision
+Table 1
+GPU occupancy for single and double precision floating points numbers.
+
+so that the length of the merge result is the same across all threads.
+In the next section, we will give some details of our parallel visibility merge implementation on NVIDIA’s CUDA platform.
+CUDA Implementation
+The algorithm was implemented in C++ with NVIDIA’s CUDA toolkit 9.1 3 . We targeted a specific GPU, the Tesla K80, with compute capability 3.7.
+The CUDA programming model is described in [8]. Basically, we can invoke C functions on the GPU, named kernels, that are called N times on N threads in parallel. The threads are organized in blocks. One block is a group of threads that have access to a shared memory. Multiple blocks reside in a Stream Multiprocessor (SM), which has hardware limitations in the amount of shared memory and number of threads that can be executed concurrently.
+For the compute capability 3.7 the limits are as follows [8]:
+
+3 Source code can be found at: https://github.com/kevinzg/visimerge.git.
+
+1024 threads per block,
+16 blocks per SM,
+112 KB shared memory per SM, and
+48 KB shared memory per block.
+Those limits are important because we need them in order maximize the GPU occupancy. Let us say that we process vt segments per thread, and we have nt threads per block. That means we process nv = vt · nt segments per block. The visibility region of one segment needs two v-rays to be represented. In C code, the v-ray list is represented as 3 arrays of numbers: one for the angles and two for the right and left scalars (we do not need to store the unit vector since we already store the angle), therefore the size, sz, of a v-ray is 12 bytes if we use single-precision floating points or 24 bytes if we use double-precision. We also use 3 additional arrays as output buffers. Consequently, we require of 4 (nv × sz) bytes to process nv segments in a block.
+Table 1 shows the number of threads per SM and the shared memory in bytes needed for various values of nt and vt. Values marked with a ∗ exceed the hardware limits. Having less than 128 threads per block means that the maximum number of threads per SM will not be reached. The best values for single precision floating point numbers is 128 threads per block, and process 1 segment per thread, the reason for this is that we get to use all the threads in a Stream Multiprocessor, and do not exceed the shared memory limit. For double-precision, there are not optimal values to maximize occupancy, but we obtained the best results with 64 threads per block, and 1 segment per thread.
+The first kernel call computes the initial v-rays for every single segment, this task is trivial to parallelize since there is no need for cooperation between threads.
+Visibility regions are then computed at two levels. First at a block level where we independently compute the visibility region of the nv segments assigned to each block. We use GPU merge path to partition the lists and assign them to the nt threads. After log2 nv passes we get the visibility region of the nv segments.
+At the next level we compute the visibility region of all segments. We merge the n/nv visibility regions cooperating between blocks. Just as at the block level we use merge path to partition the lists and assign the sublists to the blocks. The blocks then again divide their sublists and assign them to their threads. We do this for log2 (n/nv) passes and finally obtain our result.
+Next section shows the results of this implementation.
+
+Experimental Results
+For the experiments, we have implemented a serial version of the algorithm in C++ in addition to the parallel CUDA version. We have tested these two implementations with single-precision and double-precision floating point numbers, and with problem sizes up to 8 million segments.
+The serial version of the algorithm ran on a 3.00GHz Intel Xeon Platinum 8124M
+
+
+
+80
+
+60
+
+40
+
+20
+
+0
+128K 256K 512K 1M	2M	4M	8M
+Single-precision floating-point speedup
+
+
+80
+
+60
+
+40
+
+20
+
+0
+128K 256K 512K 1M	2M	4M	8M
+Double-precision floating-point speedup
+Fig. 6. GPU vs CPU execution time speedup for different number of segments.
+
+CPU with 16GiB RAM. The parallel version ran on a single Tesla K80 GPU with 2496 CUDA cores at 562MHz and 12 GiB VRAM.
+CUDA code was compiled with CUDA toolkit 9.1 and C++ compiler g++ 5.4.0. The compute capability version set for compilation was 3.7 to target the Tesla K80 GPU. Additional flags were -std=c++14, -O2 and -use fast math. The serial version was compiled with just the -std=c++14 and -O2 flags.
+The CUDA kernel launch parameters for the single-precision floating point tests were 128 threads per block and as many blocks as it was needed to process the entire input. The configuration for the double-precision tests was 64 threads per block. Those values were chosen in order to maximize the GPU occupancy.
+
+Single-precision	Double-precision
+
+Table 2
+Time to find the visibility region of n segments.
+
+The timing for the GPU does not include input/output operations between the host and the device.
+Table 2 shows the timing for the computation of the visibility region of n seg- ments in milliseconds for the CPU and GPU, and for single and double precision floating point numbers. Figure 6 shows the relative speedup of GPU vs CPU for each of the problem size tested.
+Conclusion
+We have shown an efficient parallel algorithm to find visibility region of a point in a set of segments. The algorithm is heavily inspired by mergesort and therefore we have implemented it on NVIDIA’s CUDA platform using current techniques for GPU mergesort, namely GPU Merge Path.
+The implementation uses the GPU hardware efficiently in both processing power and memory system, outperforming the sequential version by a factor of up to 76x for single precision floating point numbers and 36x for double precision.
+Future research includes the efficient parallelization of other visibility algorithms and their implementation on modern parallel platforms such as a GPU. These al- gorithms include those that solve problems like the finding the visibility graph of a set of obstacles, the art gallery problem and their 3D variations as well.
+
+References
+Asano, T., T. Asano, L. Guibas, J. Hershberger and H. Imai, Visibility of disjoint polygons, Algorithmica
+1 (1986), pp. 49–63.
+URL https://link.springer.com/article/10.1007/BF01840436
+
+Atallah, M. J., R. Cole and M. T. Goodrich, Cascading Divide-and-conquer: A Technique for Designing Parallel Algorithms, in: Proceedings of the 28th Annual Symposium on Foundations of Computer
+
+Science, SFCS ’87 (1987), pp. 151–160.
+URL http://dx.doi.org/10.1109/SFCS.1987.12
+Chazelle, B., Filtering Search: A New Approach to Query-Answering, , 15, 1983, pp. 122–132.
+URL https://epubs.siam.org/doi/abs/10.1137/0215051
+Cole, R., Parallel Merge Sort, SIAM J. Comput. 17 (1988), pp. 770–785.
+URL http://dx.doi.org/10.1137/0217049
+
+Ehsan Shoja and Mohammad Ghodsi, GPU-based Parallel Algorithm for Computing Point Visibility Inside Simple Polygons, Comput. Graph. 49 (2015), pp. 1–9.
+URL http://dx.doi.org/10.1016/j.cag.2015.02.010
+
+Ghosh, S., “Visibility Algorithms in the Plane,” Cambridge University Press, New York, NY, USA, 2007.
+URL	https://www.cambridge.org/core/books/visibility-algorithms-in-the-plane/
+BCD82CF5FE665832FAC4AAAB68305AF1
+
+Green, O., R. McColl and D. A. Bader, GPU Merge Path: A GPU Merging Algorithm, in: Proceedings of the 26th ACM International Conference on Supercomputing, ICS ’12 (2012), pp. 331–340.
+URL http://doi.acm.org/10.1145/2304576.2304621
+Nvidia, C., CUDA C programming guide, version 9.1, NVIDIA Corp (2018).
+URL  https://docs.nvidia.com/cuda/archive/9.1/cuda-c-programming-guide/index.html
+
+Suri, S. and J. O’Rourke, Worst-case Optimal Algorithms for Constructing Visibility Polygons with Holes, in: Proceedings of the Second Annual Symposium on Computational Geometry, SCG ’86 (1986),
+pp. 14–23.
+URL http://doi.acm.org/10.1145/10515.10517
+
+Sutter, H., The free lunch is over: A fundamental turn toward concurrency in software, Dr. Dobb’s journal 30 (2005), pp. 202–210.
+URL  http://www.gotw.ca/publications/concurrency-ddj.htm

@@ -1,0 +1,286 @@
+
+
+Electronic Notes in Theoretical Computer Science 240 (2009) 113–128
+www.elsevier.com/locate/entcs
+
+Combining Decision Procedures by (Model-)Equality Propagation
+Diego Caminha B. de Oliveirab,1,2 David D´eharbea,1,3 Pascal Fontaineb,1,4
+a Departamento de Informa´tica e Matema´tica Aplicada Universidade Federal do Rio Grande do Norte
+Natal, RN, Brazil
+b LORIA - INRIA
+Universit´e de Nancy Nancy, France
+
+Abstract
+SMT (Satisfiability Modulo Theories) solvers are automatic verification engines suitable to discharge im- portant classes of proof obligations generated in applying formal construction of software and hardware designs. In this paper, we present a new approach to combine decision procedures and propositional solvers into an SMT-solver. This approach is based on the generation of model equalities by decision procedures. We show the soundness and completeness of the proposed approach using an original abstract framework to represent and reason about SMT-solvers. We then present an algorithmic version of the new SMT-solving approach and discuss practical aspects of our implementation.
+Keywords: automatic theorem proving, SMT solvers, combination of decision procedures
+
+Introduction
+The application of formal methods to the design of computing systems often results in the generation of verification conditions that need to be proved in order to guar- antee the correctness of the result. Such verification conditions express properties of models or relations between models and may be expressed in a wide range of log- ics: from propositional to high order logic, but also process algebra and temporal logic. Hence the level of automation for verification in a specific formalism is tightly dependent on the availability of tools to support reasoning in such logics.
+
+1 The research presented in this paper has been partially financed by CNPq/INRIA project Da Capo and CNPq project No 307597/2006-7.
+2 Email:diego.caminha@loria.fr
+3 Email:david@dimap.ufrn.br
+4 Email:pascal.fontaine@loria.fr
+
+1571-0661 © 2009 Elsevier B.V. Open access under CC BY-NC-ND license.
+doi:10.1016/j.entcs.2009.05.048
+
+The work described in this paper addresses the verification of satisfiability mod- ulo theories (SMT) of quantifier-free formulas, i.e. verification conditions expressed in a first-order logic using symbols from a combination of theories, such as unin- terpreted functions, fragments of integer or real arithmetics, set and array theories, etc. This applies to a number of verification applications, e.g. the application of formal program transformations such as refinement [15] or refactoring laws [6], veri- fication of refinement properties in posit-and-prove software engineering efforts [1,2], or static analysis of annotations in design-by-contract languages [14]. Even verifi- cation efforts in more expressive logics often require proving lemmas that may be tackled by SMT-solvers (see for instance [4]).
+SMT-solvers can for example handle a formula like
+
+
+(1)	x ≤ y ∧ y ≤ x + f (x) ∧ P (h(x) − h(y)) ∧ ¬P (0) ∧ f (x) = 0 
+
+
+which contains linear arithmetics on reals (0, +, −, ≤), and uninterpreted sym- bols (P , h, f ). SMT-solvers use decision procedures for the disjoint languages (for instance, congruence closure for uninterpreted symbols [17], and simplex for lin- ear arithmetics) and combine them to build a decision procedure for the union of the languages. The combination of decision procedures works either through some guessing, or through the exchange of information between the decision procedures. In the general case, the information exchanged between the decision procedures is a set of disjunctions of equalities, and handling them requires often complex and costly case splitting. In the special case of convex theories, exchanging only equali- ties (and not disjunctions) is enough to ensure the completeness of the combination. We here show that even in the general case (i.e. with non-convex theories) exchang- ing equalities is also sufficient for completeness thanks to the cooperation with the propositional reasoning engine of the SMT-solver.
+The next section introduces notations and the basics of SMT-solvers. In Sec- tion 3 we present an abstract framework for describing SMT-solvers. It only serves to discuss the soundness and completeness of the combination framework we de- scribe in this paper. It is not as detailed as the DPLL(T ) framework [18] since it is not meant to be a precise description of solvers. By contrast to the DPLL(T ) frame- work and for simplicity, our schema highlights the distinction between the Boolean reasoning and the theory reasoning. It is not difficult to understand DPLL(T ) as being a refinement of our schema.
+Section 4 uses the framework introduced in Section 3 to discuss the soundness and completeness of various approaches to SMT solving. In particular, we present a new approach that consists in only exchanging equalities: either those equalities are deduced by the decision procedures, or they are assumed by generalising models. The approach is suitable for any decision procedure capable of finding models; many decision procedures inherently have this capability. A concrete algorithm using this approach is presented in Section 5. This algorithm is a simplification of our implementation. A concrete example is discussed in Section 6.
+
+Basics of SMT-solvers
+Notations
+A ﬁrst-order language is a tuple L = ⟨V, F, P⟩ such that V is an enumerable set of variables, F and P are sets of function and predicate symbols. Every function and predicate symbol is assigned an arity. Nullary predicates are propositions, and nullary functions are constants. The set of terms over the language L is defined in the usual way. An atomic formula is either t = t' where t and t' are terms, or a predicate symbol applied to the right number of terms. Formulas are built from atomic formulas, Boolean connectors (¬, ∧, ∨, ⇒, ≡), and quantifiers (∀, ∃). A formula without quantifiers is called quantiﬁer-free. A theory is a set of closed formulas. Two theories are disjoint if no predicate symbol in P or function symbol in F is interpreted in both theories.
+An interpretation I for a first-order language provides a domain D, a total function I[ƒ ] on D with appropriate arity to every function symbol ƒ , a predicate I[p] on D with appropriate arity to every predicate symbol p, and an element I[x] to every variable x. By extension, an interpretation gives a value in D to every term, and a truth-value to every formula. A model for a formula (or a theory) is an interpretation that makes the formula (resp. every formula in the theory) true. A formula is satisﬁable if it has a model, and it is unsatisﬁable otherwise. A formula ϕ is T -satisfiable if it is satisfiable in the theory T , that is, if T ∪ {ϕ} is satisfiable. A T -model of ϕ is a model of T ∪ {ϕ}. A formula ϕ is T -unsatisfiable if it has no T -model. A formula is (T )-valid if its negation is (T )-unsatisfiable. The formula ϕ is a (T )-logical consequence of the formula ψ, noted ψ |=T ϕ if every (T -)model of
+ψ is a (T -)model of ϕ. The logical consequence is also defined for sets of formulas, understanding a set of formulas as the conjunction of its components.
+An atom is an atomic formula. A literal is an atom or the negation of an atom. If l is a literal we implicitly consider that ¬¬l is the literal l. A conjunctive normal form is a conjunction of clauses, i.e. a conjunction of disjunctions of literals. It is
+always possible to transform a quantifier-free formula into equivalent or equisatis- fiable conjunctive normal form. We assume that clauses never contain twice the same atom; if a clause contains a literal and its negation, it reduces to the valid clause; redundant literals in clauses can be eliminated.
+A theory T is said convex, if whenever a disjunction of equalities x1 = y1 ∨
+... xn = yn is a logical consequence of a set of literals Γ (i.e. Γ |=T x1 = y1 ∨... xn = yn), then Γ |=T xi = yi for some i ∈ [1..n]. A theory T is stably inﬁnite if every T -satisfiable set of literals Γ has an infinite model.
+A propositional abstraction for a set of formulas is this set of formulas in which every atom has been replaced by a proposition, every occurrence of the same atom being replaced by the same proposition. A set of clauses is propositionally satisﬁable if its propositional abstraction is satisfiable. A propositional assignment Γ is a set of literals such that l ∈/ Γ or ¬l ∈/ Γ for every literal l. By construction, a propositional assignment is a propositionally satisfiable set. A propositional assignment Γ is total with respect to a set of clauses if l ∈ Γ or ¬l ∈ Γ for every atom l used in the
+
+set. A set of formulas G is a propositional consequence of a set of formulas H, if the propositional abstraction of G is a logical consequence of the propositional abstraction of H, the mapping from atoms to propositions being the same in both abstractions. An entailing assignment Γ for a set of clauses S is a propositional assignment such that S is a propositional consequence of Γ.
+
+General overview
+SMT-solvers are built by extending a propositional satisfiability solver, or SAT- solver for short, with decision procedures for the theories that appear in the formula. The SAT-solver is given the propositional abstraction of ϕ. For instance, consider ϕ is the following formula:
+
+p1	p2	p3	p4
+p5	p6
+
+¬  x¸ x≤` y˛ ∧ y¸ ≤ xx+` ƒ (x˛) ∧ ƒ¸ (xx)`= 0˛ ∧ ¸P (h(x)x`− h(y)˛) ⇒ P¸ x(`0˛) ∧ ƒ¸ (yx)`= 0˛ 
+Each atom of ϕ is abstracted to a propositional variable pi. In practice, proposi- tional SAT-solvers represent formulas in conjunctive normal form; for instance, the propositional abstraction of the previous formula would be represented as:
+p1 ∧ p2 ∧ p3 ∧ p4 ∧ (¬p5 ∨ ¬p6)
+If the formula ϕ is propositionally unsatisfiable, then it is also unsatisfiable modulo theory. Otherwise, the SAT-solver finds an entailing assignment Γ of the formula abstraction by searching an assignment of the propositional variables that satisfies each clause in the current set. For the above example, {p1, p2, p3, p4, ¬p5} is such an entailing assignment.
+The T -satisfiability of the conjunction of these literals needs then to be verified. In general, the literals may contain symbols from several theories T1, T2,... Tk. An SMT-solver therefore needs a mechanism to combine the decision procedures for each Ti into a decision procedure for the composition of these theories, such as Shostak’s [20] or Nelson and Oppen’s [16].
+In the Nelson and Oppen framework, the set of literals is used to produce an equi-satisfiable set Γ' = Γ1 ∪ Γ2 ∪ ... Γk of pure literals, i.e. literals of each Γi only contain symbols from the theory Ti. Such a separation is easily built by introducing new variables. For instance a separation for the set of literals for (1) and for the set of literals corresponding to the former entailing assignment {p1, p2, p3, p4, ¬p5} can be:
+Γ1 = {x ≤ y, y ≤ x + v1, v1 = 0, v2 = v3 − v4, v5 = 0} Γ2 = {P (v2), ¬P (v5), v1 = ƒ (x), v3 = h(x), v4 = h(y)}
+where v1 to v5 are new variables, T1 and T2 are respectively the theories for linear arithmetics on reals and for uninterpreted functions. One then identifies the set of shared variables S = {v1, v2, v3, v4, v5, x, y}. The decision procedures for each theory Ti receive the corresponding set of now pure literals Γi and should propagate to other decision procedures all the equalities between the shared variables that can be derived from Γi and from such equalities received from the other decision procedure. If the signatures are disjoint and the theories stably infinite, then the
+
+original set of literals is unsatisfiable if and only if unsatisfiability is derived by one of the decision procedures.
+If the original set of literals Γ is satisfiable, then it is a model modulo theory of the original formula ϕ, which is itself satisfiable. Otherwise, the propositional solver needs to be updated to prevent it from generating such assignment again. From a logical viewpoint this corresponds to adding the negation of the assignment, or any unsatisfiable subset thereof. It is easy to see that this can be achieved by adding a new clause in the propositional SAT-solver, consisting of the negation of the literals
+in such subset. For our example, the clause ¬p1 ∨ ¬p2 ∨ ¬p3 ∨ ¬p4 ∨ p5 would be
+added.
+In some cases, the decision procedures, or the combination framework, may be able to generate lemmas from ϕ that may be useful to guide and restrict the search space of the propositional SAT-solver. For instance, assuming t is a term with an integer type, and that the formula ϕ contains the atoms 0 < t and t < 3, adding the clause ¬0 < t ∨ ¬t < 3 ∨ t = 1 ∨ t = 2 introduces indirectly an integer arithmetics property at the propositional level.
+
+Soundness and completeness of SMT-solvers
+Initially, the formula given as input to the SMT-solver is converted to a conjunctive set of clauses S. The SAT-solver maintains a propositional assignment Γ for this set of clauses. The pair S, Γ thus represents the current state of the solver. The set of rules given in Figure 1 schematizes the possible steps taken by the solver and are described in details in the following. Observe that clauses may be added to the set either by the SAT-solver itself, or by the theory reasoner (based on the propositional assignment from the SAT-solver). The reasoning ends when the SAT- solver concludes that the set of clauses is unsatisfiable, or when the theory reasoner asserts that the propositional assignment is also T -satisfiable.
+Rule Bool (2) formalizes the update of the propositional assignment by the SAT-solver; Γ' is a new assignment such that Γ' ∪ {C} is propositionally satisfiable for every clause C ∈ S. The assignment is not required to be total; an assumption about assignment totality will be made later. The SAT-solver can also conclude that S is unsatisfiable using rule Unsat (3).
+The addition of new clauses is represented by rule Learn (4). The new clause C may be added by the SAT-solver itself. In that case, C is a propositional conse- quence of S. The clause may also be added by the theory reasoner; C should then be a logical consequence of the set S, according to the considered theory (S |=T C). By induction, it is clear that every added clause is a consequence of the original formula, and that the set of clauses is always equisatisfiable to the original set of clauses.
+If the assignment produced by the SAT-solver is entailing and T -satisfiable, then the theory solver may conclude that the formula is satisfiable. This is summarized in rule Sat (5).
+In the present scheme, no assumption is made on the order of application of
+
+
+
+
+(2)
+
+
+(3)
+
+
+(4)
+
+Bool:
+
+
+Unsat:
+
+
+Learn:
+S, Γ
+
+S, Γ'
+S, Γ UNSAT
+S, Γ
+
+Γ' is a propositional assignment of S
+
+
+S is propositionally unsatisfiable
+
+
+S |=T C
+
+
+
+(5)
+
+
+Sat:
+S ∪ C, Γ
+S, Γ SAT(Γ)
+
+
+Γ is entailing and T -satisfiable
+
+Fig. 1. Rules representing the execution of an SMT-solver
+
+rules, on how the clause C is generated in Learn (4) and on the relation between consecutive assignments from the SAT-solver. This is all left abstract, with side conditions for the soundness and completeness of the SMT-solver.
+Theorem 3.1 An SMT-solver implementing the rules of Figure 1 is sound.
+Proof. Every clause added to the initial set of clauses using rule Learn (4) is a logical consequence of the initial set of clauses. If the SAT-solver concludes to the propositional unsatisfiability of the set of clauses, the initial set of clauses is unsat- isfiable. Also, if there is a propositional entailing assignment that is T -satisfiable, the original set of clauses is satisfiable.	 
+Notice that the assumption in rule Learn (4) is very permissive. It holds notably for propositional learning, where the new clause C is obtained by propositional resolution of clauses in S, guided by the FUIP computation [22]. It also holds for conflict clauses from the theory reasoner where the clause C is the disjunction of the negation of literals in a T -unsatisfiable subset of the assignment Γ (T being the considered theory). Some further assumptions are however required to prove the completeness of an SMT-solver implementing the rules of Figure 1.
+Theorem 3.2 An SMT-solver implementing the rules of Figure 1 is complete (eventually terminates on a SAT or UNSAT state) provided that
+if the set of clauses remains unchanged 5 , the SAT-solver will eventually either
+provide an entailing assignment
+or conclude to the unsatisﬁability of the set of clauses with rule Unsat (3);
+the atoms of the clauses added in rule Learn (4) belong to a ﬁnite set that is ﬁxed a priori for the whole run of the SMT-solver;
+
+5 By unchanged, we mean that no clause is added, or every added clause is already in the set of clauses known by the SAT-solver.
+
+for any state S, Γ where Γ is entailing, either rule Sat (5) is applied or
+rule Learn (4) is applied, with C not being a propositional consequence of Γ.
+Proof. If the run is finite then it should end either with rule Sat (5) or rule Un- sat (3). This is proved by contradiction. Assume the run is finite but does not terminates on an UNSAT or SAT state. Then the ending state is of the form S, Γ. Since the set of clauses S does not change, the first assumption implies that Γ is entailing. Since Γ is entailing, the last assumption ensures either that
+the new state is SAT (with the application of rule Sat (5)) or
+the rule Learn (4) is applied and introduces a clause C that is not a propositional consequence of Γ.
+The first option is not possible, since the ending state is S, Γ. The second option is also not possible, since this would change the set S, and contradict the fact that S, Γ is the ending state.
+Assume now that the run is infinite. The set of atoms that are or will be present in the set of clauses is finite, thanks to the second assumption. The set of possible different clauses is also finite. At some point no new clause will be added to the set of clauses S by rule Learn (4), and the SAT-solver will eventually provide an entailing assignment Γ. The rule Sat (5) being an ending rule, the next rule will be rule Learn (4), and a clause C will be generated. Since C already belongs to the set of clauses and Γ is entailing, then C is a logical consequence of Γ which contradicts the last assumption of the theorem.	 
+The three requirements in the above theorem are reasonable. The first require- ment is on the SAT-solver; if the set of clauses does not change, SAT-solvers will eventually decide that the set of clauses is unsatisfiable, or provide a total (and thus entailing) assignment. The two remaining requirements are related to the theory reasoner and are discussed in the next section.
+
+Combination of theories and propositional reasoning
+In this section, we instantiate the previous framework to common approaches of combinations of theories, and discuss those various approaches.
+
+Nelson-Oppen and arrangements
+As discussed in Section 2.2, to study the 7 -satisfiability of a set of literals Γ, where the theory 7 is the union of the two disjoint stably infinite 6 theories 71 and 72, one traditionally first build a separation (Γ1, Γ2) such that Γ1 ∪ Γ2 is 7 -equisatisfiable to Γ, and Γ1 only contains interpreted symbols from 71 (similarly for Γ2).
+An arrangement A of a set of variables is a set that contains either X = Y or
+X /= Y for every pair of variables X, Y in the set. For instance, an arrangement for
+
+6 Disjointness and stably infiniteness are sufficient conditions for the easy combination of two theories. Those conditions are not necessary, but for simplicity, we assume those conditions are met.
+
+the set of variables £ = {v1, v2, v3, v4, v5, x, y} from the example in Section 2 could be
+{v1 = v2, v1 /= v3, v3 = v4, v4 = v5,x /= v1,x /= v3,x = y} (redundant (dis)equalities have been ignored). The result behind the Nelson-Oppen combination scheme (see for instance [16,21]) states that Γ (or equivalently Γ1 ∪ Γ2) is 7 -satisfiable if and only if there exists an arrangement A of the shared variables such that A∪ Γ1 is 71- satisfiable and A∪ Γ2 is 72-satisfiable. The 7 -satisfiability problem is thus reduced to a set of 71-satisfiability and 72-satisfiability problems.
+There are as many different arrangements for a set of variables as partitions of that set. The number of arrangements grows faster than exponentially with respect to the size of the set of variables. The naive approach — that is, extensively testing all arrangements — is thus only tractable for very small problems. However the approach called Delayed Theory Combination (see [5]) is a successful and simple technique that delegates the job of enumerating arrangements to the SAT-solver. The formula is purified 7 before it is given to the SAT-solver, and the (entailing) total assignments from the SAT-solver should give a truth-value to every equality between shared variables. The assignment is then given to every theory reasoner in the combination; each theory reasoner only picks among the assignment the literals that are relevant to the theory. This technique is implemented in several state of the art SMT-solvers. When given a total assignment Γ, one theory reasoner can conclude that its set is unsatisfiable and then it returns a conflict clause of the form l∈γ чl where γ is an unsatisfiable subset of Γ; this clause is obviously not a logical consequence of Γ. In the other case, every theory reasoner concludes that its set is satisfiable, and Γ is also satisfiable in the combination of theories since every (entailing) total assignment contains an arrangement. According to Section 3, the
+approach is thus sound and complete.
+
+Nelson-Oppen and deduced disjunctions of equalities
+Another practical way is to build the arrangement using deduced disjunctions of equalities from the independent theories. Informally, the following theorem states that two disjoint theories can agree on the satisfiability of a set of literals if no disjunction of equality can be deduced by one or the other theory (and given as a new fact to the other theory). Completeness of a cooperation of decision procedures can be obtained by exhaustively exchanging disjunctions of equalities between the decision procedures (instead of checking all arrangements).
+Theorem 4.1 Assume Γ1 is 71 satisﬁable, Γ2 is 72 satisﬁable, but Γ1 ∪Γ2 is not 7 - satisﬁable. Then there exists a disjunction of equalities Δ = (x1 = y1 V ... xn = yn) (where x1,... xn and y1,... yn are shared variables) such that
+Γ1 |=T1 Δ and Γ2 /|=T2 xi = yi for each i such that 1 ≤ i ≤ n;
+or Γ2 |=T2 Δ and Γ1 /|=T1 xi = yi for each i such that 1 ≤ i ≤ n.
+
+7 Purification ensures every atom contains interpreted symbols from only one theory. It has the same effect than building a separation, but it is done once and for all in the original formula and not on successive assignments.
+
+Proof. Let S1 bet the set of all equalities x = y such that Γ1 |=F1 x = y, and S2 bet the set of all equalities x = y such that Γ2 |=F2 x = y. Assume x1 = y1 belongs to S1 but not to S2: then the required new deduced disjunction of equalities can simply be this single equality (and similarly for an equality that belong to S2 but not S1). It remains to consider S1 = S2. The set S1 (or equivalently S2) is extended to form an arrangement A by adding x /= y to S1 whenever x = y does not belong to S1. According to the result behind the Nelson-Oppen combination scheme A∪Γ1 is 71-unsatisfiable or A∪Γ2 is 72-unsatisfiable since Γ1 ∪Γ2 is 7 -unsatisfiable. Assume that A∪ Γ1 is 71-unsatisfiable (the other case is handled similarly). Then Γ1 |=F1 x/=y∈A x = y and by construction Γ2 /|= x = y if x /= y belongs to A. 
+The application of the previous result requires splitting at the theory level. Assume Γ1 |=F1 x1 = y1 V ... xn = yn. Then, for every i, Γ2 ∪ {xi = yi} is checked for satisfiability. If there exists i such that Γ2 ∪ {xi = yi} is satisfiable, there
+may also exists another disjunction of equalities x' = y' V ... x' ' = y' ' such that
+1	1	n	n
+Γ2 ∪ {xi = yi} |= x' = y' V ... x' ' = y' ' . This new disjunction would also imply
+1	1	n	n
+some splitting. Eventually no more disjunction of equalities will be generated and both theories in the combination will conclude that their respective set of literals (plus the equalities coming from the case splittings) are satisfiable, or a conflict will occur and it will be required to backtrack on the case splits to examine every choice. If case splitting and backtracking is realised inside the theory reasoner for the combination of theories, the theory reasoner is complete by itself. When given an entailing assignment Γ from the SAT-solver, it will either conclude to the 7 - satisfiability of the assignment (7 being the considered combination of theories), or it returns a conflict clause of the form	l∈γ чl where γ is an unsatisfiable subset of
+Γ; once again, this clause is obviously not a logical consequence of Γ. No new atom
+is generated by the process, and all conditions are met for Theorems 3.1 and 3.2 to be applicable. The approach is sound and complete.
+Some theories are particularly appropriate for the above method. As a direct consequence, no splitting is required when combining convex theories only. Many useful theories are convex, and notably linear arithmetics on the reals, and the theory of uninterpreted functions. Among the non-convex theories one finds the theory of linear arithmetics on the integers, and the theory of arrays.
+In presence of non-convex theories, handling case splittings at the theory level may be difficult, and also inefficient. Usually this work is preferably delegated to the SAT-solver. This technique is referred as Splitting on Demand [3]. In such a
+case, rather than splitting on a disjunction x1 = y1 V ... xn = yn that is a 7i-logical consequence of the set of literals Γi, a new clause x1 = y1 V ... xn = yn V l∈Γi чl is added to the SAT-solver. Most preferably, only the literals l ∈ Γi that are required
+to imply the disjunction of equalities are added to the clause, so that the added clause subsumes many other clauses that would be generated in similar cases.
+In contrast to Delayed Theory Combination and splitting inside theory reasoners, handling case splitting through the SAT-solver may introduce new atoms, namely equalities between terms that are not in the original formula. However, since there are only a finite number of terms in the original formula, and thus a finite number of
+
+possible equalities between terms from the original formula, the second assumption of Theorem 3.2 is fulfilled. For the last assumption to be fulfilled, it is sufficient to require from the theory reasoner that, if it is not able to state if the assignment is 7 -satisfiable or not, it should at least provide a deduced clause. According to Theorem 4.1 such a clause exists whenever the assignment is 7 -unsatisfiable; this clause is not a propositional consequence of the assignment. If the theory reasoners are complete with respect to the deduction of disjunction of equalities, the SMT- solver is sound and complete.
+For some theories (and in particular, for linear arithmetics over the integer) it is not easy to be complete for the deduction of disjunction of equalities (see for instance [12]). Moreover some decision procedures for convex theories are not easily tweaked to produce equalities between variables. The next section presents another way to ensure completeness of SMT-solvers in those cases.
+
+Introducing model equalities
+The method we present here is suitable for decision procedures that are not able to deduce disjunctions of equalities, or that are not complete with respect to deduction of (disjunctions of) equalities. We assume they are however able to find a concrete model for a set of constraints, i.e. literals. As an example, it means that a reasoner for integer linear arithmetics is able to find a mapping from variables to integers such that all constraints are satisfiable. Many decision procedures inherently have such a capability.
+Assume that an assignment Γ provided by the SAT-solver produces (pure) liter- als Γ1 and Γ2 to be handled by theory reasoners for 71 and 72 respectively. Assume also that Γ1 is 71-satisfiable, and Γ2 is 72-satisfiable. Finally assume that all gener- ated disjunctions of equalities have been handled as in the previous subsection. The theory reasoners that are not complete with respect to deduction of (disjunctions of) equalities should then compute a model, and generate the equalities between shared variables that correspond to the model and that do not already belong to Γ. Those equalities are then given to the other decision procedure, as if they were in the original assignment. Those equalities may themselves force the other decision procedure to deduce or produce other equalities. Eventually no more equality is shared. If a conflict occurs, the theory reasoner for 7i generates a conflict clause C of the form  l∈g чl where ц is a 7i-unsatisfiable subset of Γ ∪ Γ' with Γ' being the set of all generated equalities. This clause is added to the set of clauses handled by the SAT solver. It may contain atoms (equalities) coming from models. If it does not, it is conflicting in the sense that Γ ∪ {C} is unsatisfiable. If it does, it is obviously not a propositional consequence of Γ. The atoms generated here once again all belong to a finite set that is known a priori, namely the set of all equalities between two terms in the original formula.
+If no conflict occurs, then Γ ∪ Γ' contains equalities between any two shared variables that are equal according to the model. Conversely, if an equality between two shared variables does not belong to Γ∪Γ', it has not been guessed nor deduced by the decision procedures in the combination. If we assume every decision procedure
+
+is either complete with respect to the generation of disjunction of equalities, or that it generates model equalities, one can conclude that the two theories agree that, if no equality between two shared variables exists in Γ ∪ Γ', they should be different. An arrangement A can thus be built from the equalities in Γ ∪ Γ', augmented by the maximum number of inequalities between shared variables. A∪ Γ1 is 71-satisfiable and A∪ Γ2 is 72-satisfiable. Rule Sat (5) can be applied and the third assumption of Theorem 3.2 is fulfilled. The approach is sound and complete.
+
+An	algorithm	for	Nelson-Oppen	with	model- equalities
+Algorithm 1 provides a high level pseudo-code of the Nelson and Oppen framework with model equalities, as described in Section 4.3. We assume that the propositional satisfiability solver can incorporate new literals (corresponding to constraints that are not in the original formula). This capability is also required for the splitting on demand approach described in Section 4.2. The presented algorithm also gives the decision procedures the opportunity to take advantage of the similarities between consecutive sets of literals produced by the propositional SAT-solver as they may update their state to reflect only the difference between these sets.
+As described in Section 4.3, we also assume that the decision procedures for the theories 7i are able to generate the model equalities based on a model they keep based on the literals, equalities and inequalities they receive. The main difference with respect to a version without model equalities is located in the lines 17 to 21.
+The main loop of the algorithm is executed until the SAT-solver can no longer produce a propositional satisfiable assignment (line 1). In this case, the original
+formula is unsatisfiable (Rule Unsat (3)).  Otherwise, a propositional model is
+computed (line 2) (Rule Bool (2)). Each decision procedure t may then backtrack
+to a state based on the new set of literals corresponding to this assignment (line 4). Note that the set of literals available in such state should be 7i-satisfiable in each theory 7i. The variable newLiterals will maintain the set of literals that the decision
+procedures need to receive. It is initially set with the new literals present in the assignment (line 5), and is later updated with equalities produced by the decision procedures (lines 16 and 19). This set is repeatedly propagated to each decision procedure until one of them detects unsatisfiability (line 9) or no new equalities can be deduced (line 22). If unsatisfiability is detected, then a conflict clause is generated
+and added to the propositional satisfiability solver (line 10). This action implements an instance of Rule Learn (4). Otherwise, each decision procedure computes the set of variable equalities entailed by the current set of literals. These sets are stored for
+propagation at the next iteration (line 16). Ultimately, if no variable equalities can
+be deduced, then the decision procedures that do not have complete (disjunctions of) equality deduction capabilities will look for model equalities to propagate 8 .
+Once all the literals and equalities have been propagated, additional lemmas
+
+8 In this algorithm, we assume that none of the non-convex theories have capabilities of generating disjunc- tions of equalities, i.e., internal case split is not handled.
+
+produced by the decision procedures may be incorporated as clauses to the propo- sitional satisfiability solver (lines 23–25). Again, this corresponds to an instance of Rule Learn (4). Eventually, when no new information can be provided to the propositional satisfiability solver, and if the assignment is total, then the algorithm concludes that the original formula is 7 -satisfiable and halts (line 26), which corre- sponds to Rule Sat (5).
+
+
+
+Algorithm 1: Satisfiability Check
+
+Combining Uninterpreted Functions with Integer Difference Logic: An Example
+In this section we present an example of how to handle the combined theory of un- interpreted functions (UF) and integer difference logic (IDL) using model equalities, i.e., not having to generate disjunction of equalities necessary for completeness in a Nelson and Oppen (NO) combination framework. Difference Logic is the linear arithmetic fragment that contains only constraints of the kind x — y da c, where x and y are variables, c is a constant number and da∈ {≤, ≥, =, <, >}. We want to prove that the formula ϕ is unsatisfiable.
+ϕ : x ≤ y +1 Λ y ≤ x Λ x /= y Λ ƒ (x) /= ƒ (y + 1)
+As a first step and for simplicity of the presentation, we assume the formula is purified (i.e. the separation is done at the formula level) so that the different decision procedures only get literals with symbols from their theory. The obtained formula is ϕ', and each different atom is attributed to a propositional variable pi.
+
+p1	p2
+p3	¬p4
+¬p5
+
+ϕ' : ¸v =x`y + 1˛	¸  x`˛	¸ x` ˛	¸ x=` y˛ Λ ¸ƒ (x) /=x`ƒ (v ˛)
+Figure 2 can be used to trace the status of the algorithm during its application to this problem. We use the symbols pi to represent the constraints and compact the figure. We also consider that ч(a = b) is a /= b, ч(a ≤ b) is a > b, and ч(a ≥ b) is a < b.
+
+Fig. 2. An example combining UF and IDL.
+
+State 1 corresponds to the computation by the SAT-solver of a propositional assignment Γ of the formula. The constraints from Γ are propagated to the decision procedures to check for theory consistency. 71 and 72 are the decision procedures for UF and IDL, respectively. At this point, no equality can be generated and the process would end if there were only convex theories involved.
+
+However, IDL is non-convex. Two approaches are possible here: generate a disjunction of equalities, as proposed in Section 4.2 or a model equality, a new approach proposed in Section 4.3 and adopted in Algorithm 1. A difference logic solver based on graph algorithms (see e.g. [13]) can generate one model easily. In a consistent model we would have values such as x = 0, y = —1 and v1 = 0, so the model equality x = v1 (abstracted to proposition p6) is generated and propagated to all decision procedures. State 1.1 is then reached, and a contradiction is found in the UF engine, as the conjunction x = v1 Λ ƒ (x) /= ƒ (v1) is unsatisfiable.
+The conflict clause p5 V чp6 is added to the SAT-solver and a second iteration of the main loop is necessary. The algorithm reaches State 2, where a new assignment is generated. The decision procedures backtrack to the previous satisfiable state, i.e., just before propagating the model equality x = v1 (i.e. p6). The set of literals is thus incremented with literal чp6 (i.e. x /= v1) which is dispatched to both decision procedures. No contradiction or equality is generated, but IDL finds that the current assignment conflicts with the previously generated model equality. To remedy this situation, the IDL decision procedure generates a lemma: (x = v1) V (x > v1) V (x < v1). The lemma is incorporated to the SAT-solver. This results in the creation of a new propositional variable p7 corresponding to the atom v1 ≤ x.
+The lemma is incorporated by the SAT-solver and the main loop is thus iterated a third time, the algorithm reaching State 3. A new assignment is generated, resulting in the addition of a new literal чp7 (i.e. чv1 ≤ x, or x < v1), which is propagated to the decision procedure for IDL. This decision procedure is then in condition to deduce the equality between shared variables x = y from x < v1, v1 = y+1 and y ≤ x. The algorithm reaches then State 3.1, where this equality has been propagated to the decision procedure for UF, which detects the conflict x /= y Λ x = y, so the assignment is once again considered theory inconsistent. The corresponding conflict clause is generated (p4 V p7 V чp1 V чp3) and added to the SAT-solver.
+At that point, State 4, the SAT-solver concludes there is no more assignment that makes the current formula propositionally true. Therefore, the problem is unsatisfiable.
+
+Conclusion
+In this paper, we presented a new approach to combine decision procedures, based on the generation of model equalities. The originality is that the combination maintains the completeness property of the classic approach if the decision procedures have the capability to generate model equalities instead of disjunction of equalities. In practice, this new requirement is often much simpler to implement than the original one. We also proposed a simple abstract framework to reason about SMT-solvers and applied it to show the completeness of our approach based on the generation and propagation of model equalities. This approach inherits model-based guessing from [7], and the interaction of decision procedures through the SAT-solver from [3]. We aim to provide an implementation that is easily integrated in other deduc- tion tools such as Isabelle [19], Coq [11], HOL [9] or HOL-light [10]. For this, it is
+
+necessary to provide detailed proofs. The present approach is particularly suitable, since it makes a clear distinction between the propositional reasoning and the the- ory reasoning. Propositional reasoning steps as well as equality propagating steps consist in propositional resolution steps. The reasoning steps for equality deduction and conflicts are specific to theories.
+Since the bottleneck of the cooperation between proof assistants and SMT- solvers is not the efficiency of the SMT-solvers, our focus has not been much directed towards the efficiency of our implementation. In particular, we do not implement theory propagation (see for instance [18]). However, we observed that for the specific QF UFIDL benchmarks reported to work particularly well for [7], our implementa- tion works as fast as in Z3 [8].
+Future works include applying this technique to other decidable fragments (for instance full linear arithmetic on integer and reals). Also, our implementation includes a full-featured first-order theorem prover that handles user theories. We will then investigate the benefits of our framework in presence of such user defined theories.
+
+References
+Abadi, M. and L. Lamport, The existence of refinement mappings, Technical Report 29, DEC/SRC (1988).
+Abrial, J.-R., “The B-Book: Assigning Programs to Meanings,” Cambridge University Press, 1996.
+Barrett, C., R. Nieuwenhuis, A. Oliveras and C. Tinelli, Splitting on demand in SAT modulo theories, in: M. Hermann and A. Voronkov, editors, Proc. 13th Int’l Conf. on Logic for Programming, Artificial Intelligence, and Reasoning (LPAR), Lecture Notes in Computer Science 4246 (2006), pp. 512–526.
+URL http://dx.doi.org/10.1007/11916277_35
+
+Barsotti, D., L. P. Nieto and A. Tiu, Verification of clock synchronization algorithms: experiments on a combination of deductive tools, Form. Asp. Comput. 19 (2007), pp. 321–341.
+
+Bruttomesso, R., A. Cimatti, A. Franz´en, A. Griggio and R. Sebastiani, Delayed theory combination vs. nelson-oppen for satisfiability modulo theories: A comparative analysis, in: M. Hermann and
+A. Voronkov, editors, Proc. 13th Int’l Conf. on Logic for Programming, Artificial Intelligence, and Reasoning (LPAR), Lecture Notes in Computer Science 4246 (2006), pp. 527–541.
+URL http://dx.doi.org/10.1007/11916277_36
+
+Corn´elio, M., A. Cavalcanti and A. Sampaio, Refactoring towards a layered architecture, in: Proc. Brazilian Symposium on Formal Methods (SBMF 2004), 2004, pp. 199–216.
+de Moura, L. and N. Bjørner, Model-based theory combination, Electr. Notes Theor. Comput. Sci 198
+(2008), pp. 37–49.
+de Moura, L. and N. Bjørner, Z3: An efficient SMT solver, in: Proc. Conf. on Tools and Algorithms for the Construction and Analysis of Systems (TACAS), Lecture Notes in Computer Science 4963 (2008),
+pp. 337–340.
+Gordon, M. J. C. and T. F. Melham, editors, “Introduction to HOL: A theorem proving environment for higher order logic,” Cambridge University Press, 1993.
+URL http://www.dcs.glasgow.ac.uk/~tfm/HOLbook.html
+
+Harrison, J., HOL light: A tutorial introduction, in: M. Srivas and A. Camilleri, editors, Proc. First International Conference on Formal Methods in Computer-Aided Design (FMCAD’96), Lecture Notes in Computer Science 1166 (1996), pp. 265–269.
+Huet, G., G. Kahn and C. Paulin-Mohring, “The Coq Proof Assistant - A tutorial, Version 8.0,” (2004). URL http://coq.inria.fr
+
+
+Lahiri, S. K. and M. Musuvathi, An efficient decision procedure for UTVPI constraints, in: B. Gramlich, editor, Proc. Int’l Workshop Frontiers of Combining Systems (FroCoS) 2005, Lecture Notes in Computer Science 3717 (2005), pp. 168–183.
+URL http://dx.doi.org/10.1007/11559306_9
+
+Lahiri, S. K. and M. Musuvathi, An efficient Nelson-Oppen decision procedure for difference constraints over rationals, Electr. Notes Theor. Comput. Sci 144 (2006), pp. 27–41.
+URL http://dx.doi.org/10.1016/j.entcs.2005.12.004
+
+Leino, K. R. M., Object invariants in specification and verification, in: Proc. Brazilian Symposium on Formal Methods (SBMF 2006), 2006, pp. 3–4.
+Morgan, C., “Programming from Specifications,” Prentice Hall International, 1994.
+Nelson, G. and D. Oppen, Simplification by cooperating decision procedures, ACM Transactions on Programming Languages and Systems 1 (1979), pp. 245–257.
+Nelson, G. and D. Oppen, Fast decision procedures based on congruence closure, Journal of the ACM
+27 (1980), pp. 356–364.
+Nieuwenhuis, R. and A. Oliveras, DPLL(T) with exhaustive theory propagation and its application to difference logic, in: K. Etessami and S. Rajamani, editors, Proc. 17th Int’l Conf. on Computer Aided Verification (CAV), Lecture Notes in Computer Science 3576 (2005), pp. 321–334.
+Nipkow, T., L. Paulson and M. Wenzel, “Isabelle/HOL. A Proof Assistant for Higher-Order Logic,” Lecture Notes in Computer Science 2283, Springer-Verlag, 2002.
+Shostak, R. E., Deciding combinations of theories, Journal of the ACM 31 (1984), pp. 1–12.
+Tinelli, C. and M. T. Harandi, A new correctness proof of the Nelson–Oppen combination procedure, in:
+F. Baader and K. U. Schulz, editors, Proc. Frontiers of Combining Systems (FroCoS), Applied Logic (1996), pp. 103–120.
+URL citeseer.nj.nec.com/tinelli96new.html
+
+Zhang, L., C. Madigan, M. Moskewicz and S. Malik, Efficient conflict driven learning in boolean satisfiability solver, in: Proc. Int’l Conf. on Computer Aided Design (ICCAD), 2001, pp. 279–285.

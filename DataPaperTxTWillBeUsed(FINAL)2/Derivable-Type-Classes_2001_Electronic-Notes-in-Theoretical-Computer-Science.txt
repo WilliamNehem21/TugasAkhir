@@ -1,0 +1,727 @@
+Electronic Notes in Theoretical Computer Science 41 No. 1 (2001)
+URL: http://www.elsevier.nl/locate/entcs/volume41.html 31 pages
+
+
+Derivable Type Classes
+
+Ralf Hinze 1
+Institut fu¨r Informatik III Universit¨at Bonn
+R¨omerstrafte 164, 53117 Bonn, Germany
+
+Simon Peyton Jones 2
+Microsoft Research Ltd
+St George House, 1 Guildhall St Cambridge CB2 3NH, England
+
+
+Abstract
+Generic programming allows you to write a function once, and use it many times at different types. A lot of good foundational work on generic programming has been done. The goal of this paper is to propose a practical way of supporting generic programming within the Haskell language, without radically changing the language or its type system. The key idea is to present generic programming as a richer language in which to write default method definitions in a class declaration.
+On the way, we came across a separate issue, concerning type-class overloading where higher kinds are involved. We propose a simple type-class system extension to allow the programmer to write richer contexts than is currently possible.
+
+
+Introduction
+A generic, or polytypic, function is one that the programmer writes once, but which works over many different data types. The standard examples are parsing and printing, serialising, taking equality, ordering, hashing, and so on. There is lots of work on generic programming [2,8,1,6].
+In this paper we present the design and implementation of an extension to Haskell that supports generic programming. At first sight it might seem that Haskell’s type classes are in competition with generic programming — after all, both concern functions that work over many data types. But we have
+
+1 Email: ralf@informatik.uni-bonn.de
+2 Email: simonpj@microsoft.com
+◯c 2001 Published by Elsevier Science B. V. Open access under CC BY NC ND license.
+
+
+found that they can be combined very gracefully, offering a smooth upward extension to Haskell.
+On the way we describe an orthogonal, but complementary idea. Haskell allows one to define higher-order kinded data types for which it is impossible to define, for example, an equality instance. This seems unfortunate: one part of the language is more powerful than another. We describe a modest extension of Haskell’s type-class system that removes this difficulty.
+More specifically, our contributions are these:
+✷ We present the language design for an extension to Haskell that supports generic programming (Sections 2–6). Generic functions appear solely in class declarations.
+✷ We describe an entirely separate extension that lets one write certain in- stance declarations for higher-order kinded data types that are simply in- expressible in Haskell 98 (Section 7).
+✷ We discuss the implementation of both parts.
+The first part of this paper is a follow-up to [4]; the new achievements are detailed in Section 8.
+
+Setting the scene
+In this section we set the context for our proposal. We begin by reviewing Haskell’s type-class overloading mechanism.
+
+A brief review of type class overloading
+Haskell supports overloading, based on type classes. For example, the Prelude defines the class Eq :
+class Eq t where
+(), (/ ) :: t → t → Bool .
+This defines two overloaded top-level functions, () and (/ ), whose types are (), (/ ) :: (Eq t ) ⇒ t → t → Bool .
+Before we can use () on values of, say Int , we must explain how to take equality over Int values:
+instance Eq Int where
+() = eqInt
+(/ ) = neInt.
+Here we suppose that eqInt :: Int → Int → Bool , and similarly neInt are provided from somewhere. The instance declarations says “the () function at type Int is implemented by eqInt ”.
+
+How can we take equality of pairs of values? Presumably by comparing their components; but that requires equality over the component types:
+instance (Eq a, Eq b) ⇒ Eq (a, b) where
+(x1, y1)  (x2, y2) = (x1  x2) Λ (y1  y2)
+(x1, y1) / (x2, y2) = (x1 / x2) V (y1 / y2).
+It is a bit annoying to keep having to write code for the (/ ) method, because it is simply the negation of the code for the () method, so Haskell allows you to write a default method in the class declaration:
+class Eq t where
+(), (/ ) :: t → t → Bool
+x1 / x2  = not (x1  x2).
+Now, if you give an instance declaration for Eq that lacks a definition for (/ ), Haskell “fills in” the missing method definition with code copied from the class declaration. So we can write:
+instance (Eq a, Eq b) ⇒ Eq (a, b) where
+(x1, y1)  (x2, y2) = (x1  x2) Λ (y1  y2)
+and get just the same effect as before. You can even specify a default method for both methods:
+class Eq t where
+(), (/ ) :: t → t → Bool
+x1  x2	= not (x1 / x2) x1 / x2		= not (x1  x2).
+In an instance declaration, you can now either give a definition for (), or a definition for (/ ), or both. If you specify neither, then you will get an infinite loop, unfortunately!
+If you give an instance declaration without specifying code for method op, and the class has no default method for op, then invoking the method will halt the program with an error message. It is not a compile-time error; sometimes a method just doesn’t make sense for a particular instance type.
+
+Overloading is not generic programming
+Haskell as it stands does not support generic, or polytypic, programming. In particular, suppose you define a new data type:
+data Wibble = Wag Int | Wug Bool .
+It is “obvious” how to take equality over Wibble, and support for generic programming would allow us to specify this “obvious” precisely. In Haskell, however, you have to give an explicit instance declaration, containing the code
+
+for equality:
+instance Eq Wibble where
+(Wag i1)  (Wag i2) = i1  i2 (Wug b1)  (Wug b2) = b1  b2 w1  w2	= False.
+Cranking out this sort of boilerplate code is so tiresome that Haskell provides special support — the so-called “deriving” mechanism — for a handful of built-in classes. In particular, for Eq you say
+data Wibble = Wag Int | Wug Bool deriving (Eq ).
+The “deriving (Eq )” part tells Haskell to generate the “obvious” code for equality. What “obvious” means is specified informally in an Appendix of the language definition [15]. This is all rather ad hoc, and in particular it only works for a ﬁxed set of built-in classes (Eq , Ord , Enum, Bounded , Read , Show , and Ix ).
+
+
+
+Generalising default methods
+What we seek, then, is an automatic mechanism that “fills in” a suitable im- plementation for the methods of an instance declaration. But wait a minute! That’s what a default method does! Indeed so but, as we have already re- marked, default methods as they stand are too weak. If we write merely:
+instance Eq Wibble
+we would, as remarked earlier, just get an infinite loop. We have to provide some real code somewhere! What we want is a richer language in which to write default methods. That is what we turn our attention to now. 
+
+
+
+Generic definitions
+From a language-design point of view, our story is this: providing a richer language for default method deﬁnitions in a class declaration gives an elegant way to extend Haskell with the power of generic programming. We will justify this statement more fully in Section 9, but first we must present our design.
+
+Two examples
+We adopt with minor changes the proposal in [4]. Two examples will serve to give the idea. First, here is the Eq class augmented with generic equality:
+class Eq t where
+(), (/ )	:: t → t → Bool
+-- generic default method
+(){1}Unit Unit	= True
+(){a + b }(Inl x1) (Inl x2)	= x1  x2
+(){a + b }(Inr y1) (Inr y2)	= y1  y2
+(){a + b } 	= False
+(){a ∗ b }(x1 :∗: y1) (x2 :∗: y2) = x1  x2 Λ y1  y2
+-- vanilla, non-generic default method
+(/ ) x1 x2	= not (x1  x2).
+This new class declaration contains an ordinary, default declaration for (/ ), just as before. The new feature is a generic deﬁnition for equality, distin- guished by the curly braces on the left hand side, which enclose a type argu- ment. We will study such generic definitions in more detail in Section 4.2. For now, we simply observe that a generic definition works by induction over the structure of the type (written in curly braces) at which the class is instanti- ated.
+Now we can give an instance declaration like this:
+instance Eq Wibble
+without giving code for either method. Both methods will be “filled in” from the class declaration. The ordinary, non-generic default method, (/ ), is filled in verbatim. The generic default method, (), is specialised in a way we will describe, to give essentially the code in Section 2.2. That is, the effect of the instance declaration is exactly as if we had written
+instance Eq Wibble where
+(Wag i1)  (Wag i2) = i1  i2 (Wug b1)  (Wug b2) = b1  b2 w1  w2	= False
+w1 / w2	= not (w1  w2).
+Here is another example. The class Binary has methods showBin and readBin
+that respectively convert a value to a list of bits and vice versa:
+data Bit	= 0 | 1 type Bin	= [Bit ] class Binary t where
+showBin :: t → Bin readBin	:: Bin → (t, Bin).
+
+
+A real implementation might have a more sophisticated representation for Bin but that is a separate matter. We can give generic definitions for showBin and readBin like this:
+showBin{1}Unit	= [ ] showBin{a + b }(Inl x ) = 0 : showBin x showBin{a + b }(Inr y ) = 1 : showBin y
+showBin{a ∗ b }(x :∗: y ) = showBin x ++ showBin y
+readBin{1}bs	= (Unit, bs)
+readBin{a + b }[]	= error "readBin"
+readBin{a + b }(0 : bs)	= let (x , bs')= readBin bs
+in (Inl x , bs') readBin{a + b }(1 : bs)	= let (y, bs')= readBin bs
+in (Inr y, bs') readBin{a ∗ b }bs	= let (x , bs1)= readBin bs
+(y, bs2)= readBin bs1
+in ((x :∗: y ), bs2).
+Notice that readBin produces a value of the unknown type t , whereas showBin and () both consume such values. Again, we can make Wibble an instance of Binary by saying simply
+instance Binary Wibble.
+
+Instances and deriving
+Though all of this sounds simple enough, it has interesting and important consequences:
+✷ Though an instance declaration for a class with generic methods is now rather brief, it must still be given. It is not the case, for example, that all types become instances of Eq when one gives a generic default method in the class declaration for Eq .
+✷ It is not necessary for the instance declaration to appear in the same mod- ule as the data type declaration, or the class declaration. By contrast, in Haskell 98 a deriving clause must be attached to the data type declara- tion. This separation is useful, because the class might not even be defined in the scope where the type is declared.
+✷ The compiler only fills in a method definition if the programmer omits it.
+For example, if we said
+instance Eq Wibble where (Wag )  (Wag ) = True w2  w2	= False,
+then this programmer-supplied code is, of course, used. This is one way in which our proposal differs from others. In most generic-programming systems, a generic function works generically over all types. In our design,
+
+the programmer can override the generic deﬁnition on a type-by-type basis. This ability is absolutely crucial to support abstract data types. For example, a set may be represented as a balanced tree in more than one way, and equality must take account of this fact. Simply using a generic equality function would take equality of representations, which is simply wrong in this case. In a similar way, we can also use ordinary instance declarations to specify what a generic operation should do on primitive types, such as Char , Int , Double. In particular, if you want to define a method for types involving function-spaces, you simply supply an instance
+declaration for “→”.
+✷ A deriving clause can now be seen as shorthand (albeit now not so much shorter) for an instance declaration. There is a difference, though. Con- sider
+data Tree a = Node a [Tree a ] deriving (Eq ).
+In our design, the deriving clause is shorthand for
+instance (Eq a) ⇒ Eq (Tree a)
+Note that in an instance declaration we must explicitly specify the context (Eq a), which is inferred automatically by the deriving mechanism. We discuss this issue in more detail in Section 4.4.
+Generic representation types
+The arguments in braces on the left hand side of a generic definition are types. The idea is, of course, that these generic definitions can be specialised for any particular type. Suppose, for example, we have a data type List , and we make List an instance of Binary :
+data List a = Cons a (List a) | Nil
+instance (Binary a) ⇒ Binary (List a).
+How is the compiler to fill in the missing method definitions?
+First, we define the generic representation type for List , which we will call
+List ◦:
+type List ◦ a = (a ∗ List a)+ 1.
+We will have more to say about representation types in Section 6.2, but for now we can just think of List ◦ as a type that is more-or-less isomorphic to List , but one that uses only a small, fixed set of type constructors, namely unit, sums, and products. Notice also that List ◦ is not a recursive type; it mentions List on the right hand side, not List ◦. So our generic representation types give a representation for just the “top level” of a recursive type.
+The unit, sum, and product types are defined like this:
+data 1	= Unit
+data a + b = Inl a | Inr b
+data a ∗ b = a :∗: b.
+
+
+Of course, 1 is not a legal Haskell type constructor, and nor are infix (+) and (∗). We give them special syntax to distinguish them from their “normal” counterparts, (), Either a b, and (a, b), and extend the syntax of types to accommodate them.
+In our example, a List is a sum (+) of two types: a product (∗) of the element type a and a List , and the unit type (1). To make the isomorphism explicit, let us write functions that convert to and fro 3 :
+to-List	:: ∀a . List ◦ a → List a to-List (Inl (x :∗: xs)) = Cons x xs
+to-List (Inr Unit )	= Nil
+from-List	:: ∀a . List a → List ◦ a from-List (Cons x xs) = Inl (x :∗: xs)
+from-List Nil	= Inr Unit.
+
+The generic instances
+The idea is that by regarding a List as a List◦, the generic code explains what to do. The generic method for showBin, for example, says what to do if the argument is a sum, what to do if it is a product, and what to do if it is a unit type.
+It’s useful to imagine re-expressing these default methods as three ordinary instance declarations:
+instance Binary 1 where
+showBin Unit	= [ ]
+readBin bs	= (Unit, bs)
+instance (Binary a, Binary b) ⇒ Binary (a + b) where
+showBin (Inl x )	 = 0 : showBin x showBin (Inr y )	 = 1 : showBin y readBin []	= error "readBin"
+readBin (0 : bs)	= let (x , bs')= readBin bs
+in (Inl x , bs')
+readBin (1 : bs)	= let (y, bs')= readBin bs
+in (Inr y, bs')
+instance (Binary a, Binary b) ⇒ Binary (a ∗ b) where showBin (x :∗: y ) = showBin x ++ showBin y readBin bs	= let (x , bs1)= readBin bs
+(y, bs2)= readBin bs1
+in ((x :∗: y ), bs2).
+
+3 In this paper we will make quantification explicit, even though Haskell 98 does not offer explicit quantification. So, in this example, we write an explicit ∀ in the type signature for to-List . Some of our types become quite complicated, so it helps to be absolutely certain where quantification is taking place.
+
+
+We describe these instance declarations for generic representation types as generic instance declarations. They are not written explicitly by the pro- grammer, but instead are derived by the compiler from a class declaration that has generic default methods. We discuss generic instance declarations further in Section 4.3.
+Filling in the missing methods
+We are now ready to say more precisely how the compiler fills in the missing methods. In this section we sketch the idea using an example, while Section 6 deals with the general case.
+When the programmer writes
+instance (Binary a) ⇒ Binary (List a) the compiler will fill in the method declarations as follows:
+showBin xs = showBin (from-List xs)
+readBin bs = case readBin bs of
+(xs, bs') → (to-List xs, bs').
+Let us focus on the definition for showBin. It works in two stages:
+First, from-List :: ∀a . List a → List ◦ a converts the input list of type
+List a into a value of type List ◦ a.
+Second, we call the overloaded showBin function to complete the job, using the methods of the generic instance declarations.
+At first this looks utterly bizarre.	We are defining showBin in terms of
+showBin. But look at the definition one would write by hand:
+instance (Binary a) ⇒ Binary (List a) where
+showBin Nil	= 0 :[ ]
+showBin (Cons x xs) = 1 : showBin x ++ showBin xs.
+The first call is to showBin at the list element type; the second is a recursive call to the same showBin at the list type.
+Something similar happens with the generic definition. Here showBin is called on an argument of type List ◦ a. This is a sum type, so the sum instance of Binary kicks in (Section 3.4). It in turn will call showBin, once at type 1, and once at type a ∗ List a. The former has an instance declaration, while the latter uses the product instance and makes calls to showBin at type a and List a. But the former is just like the showBin x in the hand-written instance, while the latter is like the showBin xs. So everything works out. 
+Let us return briefly to the first step above. In the case of showBin it was fairly simple to convert the argument to its generic representation type. On the other hand readBin was a bit more complicated because it returned a pair, only one component of which had to be converted. How, in general, does the compiler perform this conversion? We devote the whole of Section 5 to this topic. First, though, we elaborate on the programmer-visible aspects of our
+
+design.
+Discussion and elaboration
+We have now sketched the bones of our design. In this section we elaborate on some of the details.
+Constructor names and record labels
+Annoyingly, unit, sum, and product are not quite enough. Consider, for ex- ample, the standard Haskell class Show . To be able to give generic definitions for showsPrec, the names of the constructors, and their fixities, must be made accessible.
+To this end we provide an additional generic representation type, of the form c of a where c is a value variable of type ConDescr and a is a type variable. The type ConDescr is a new primitive type that comprises all con- structor names. To manipulate constructor names the following operations among others can be used — for an exhaustive list see [4].
+data ConDescr	-- abstract
+data Fixity = Noﬁx | Inﬁx Int | Inﬁxl Int | Inﬁxr Int
+conName :: ConDescr → String -- primitive conArity :: ConDescr → Int -- primitive conFixity  :: ConDescr → Fixity  -- primitive
+instance Show ConDescr where
+show   = conName
+Using conName and conArity we can implement a simple variant of Haskell’s
+Show class — for the full-fledged version see [4].
+class Show t where
+show	:: t → String
+showsPrec	:: Int → t → String
+show x	= showsPrec 0 x showsPrec{a + b }d (Inl x ) = showsPrec d x showsPrec{a + b }d (Inr y ) = showsPrec d y
+showsPrec{c of a }d (Con c x )
+= if conArity c  0 then show c
+else showParen (d ≥ 10)
+(show c ++ "." ++ showsPrec 10 x )
+showsPrec{a ∗ b }d (x :∗: y )
+= showsPrec d x ++ "." ++ showsPrec d y
+The representation type c of a is defined by the following pseudo-Haskell declaration:
+newtype c of a = Con c a.
+
+
+Uniquely for Haskell, c is a value that is carried by a type. It is best to think of the above declaration as defining a family of types: for each c there is a type constructor “c of ” of kind * → * with a value constructor “Con c” of type a → (c of a). Now, why does the type c of a incorporate information about c? One might suspect that it is sufficient to supply this information on the value level. Doing so would work for show , but would fail for read :
+class Read t where
+read	:: String → [(t, String )]
+read {c of a }s = [(Con c x , s3)
+| (s1, s2) ← lex s, s1  conName c,
+(x , s3) ← read s2 ].
+The important point is that read produces (not consumes) the value, and yet it requires access to the constructor name.
+Haskell allows the programmer to assign labels to the components of a constructor, and these, too, are needed by read and show . For the purpose of presentation, however, we choose to ignore field names. In fact, they can be handled completely analogously to constructor names.
+
+
+Generic class declarations
+In general, a class declaration consists of a signature, which specifies the types of the class methods, and an implementation part, which gives default defini- tions for the class methods. The type signature has the general form:
+class ctx ⇒ C a where
+op1  :: Op1 a
+... 
+opn  :: Opn a.
+The implementation part consists of generic and non-generic default defini- tions. A non-generic definition is an ordinary Haskell definition
+op = .... 
+A generic definition can be recognised by the type patterns on the left hand side, enclosed in curly braces. It has the schematic form
+op{1}	= ... 
+op{a + b }	= ... 
+op{a ∗ b }	= ... 
+op{c of a } = .... 
+
+
+The type patterns are mandatory, so that the equations can be correctly grouped. For example, consider the generic definition of () given earlier:
+(){1}Unit Unit	= True
+(){a + b }(Inl x1) (Inl x2)	= x1  x2
+(){a + b }(Inr y1) (Inr y2)	= y1  y2
+(){a + b } 	= False
+(){a ∗ b }(x1 :∗: y1) (x2 :∗: y2) = x1  x2 Λ y1  y2.
+Without the type patterns there is no way to decide whether the second but last equation belongs to the (+) or to the (∗) case.
+Apart from the type patterns, a generic definition has exactly the form of a normal Haskell definition.
+We note the following points:
+✷ A class declaration may specify an arbitrary mixture of generic and non- generic default-method declarations. In the case of Eq above, () is defined by induction over the argument type, while (/ ) is non-generic. The generic and non-generic methods may be mutually recursive.
+✷ Class declarations are the only place that generic definitions appear in our design. There are no “free-standing” generic definitions, just as there are no free-standing overloaded definitions in Haskell. (One might disagree with this choice, but it does not limit expressiveness, because one can always invent a class to encapsulate a new overloaded or generic function.)
+✷ At the moment, generic default declarations may only be given for type
+classes, that is, for classes whose type parameter ranges over types of kind
+*. For example, we cannot specify a generic default method for the Functor class:
+class Functor f where
+fmap :: (a → b) → (f a → f b).
+This is the first extension we plan to add in the future.
+✷ For a multi-parameter type class there would be multiple type arguments.
+We do not consider this complication in this paper.
+
+Generic instance declarations
+In Section 3.4 we said that the generic definitions in a class declaration are re-expressed by the compiler as a set of instance declarations, one for each generic representation type. One might ask: why not get the programmer to write these instance declarations directly?
+Our answer is stylistic rather than technical. We want to present generic programming in Haskell as a richer language in which to write default method declarations, and scattering them over several instance declarations does not convey that message. The question about whether a generic-default decla- ration was available to use would become more diffuse, because some parts,
+
+but not others, might be available. Writing the declaration all at once, in the class declaration, seems to be the simplest and most direct thing to do, even though it does involve a little new syntax.
+Another stylistic reason for our decision is that it is rather easy to confuse the generic instance declaration for, say, products a ∗ b with “ordinary” in- stance declarations for the corresponding “ordinary” product type (a, b). For example, in the case of Show , the ordinary instance declaration for products might look like this:
+instance (Show a, Show b) ⇒ Show (a, b) where
+showsPrec d (x , y )
+= "(" ++ showsPrec 0 x ++ "," ++ showsPrec 0 y ++ ")".
+Because tuples are typically shown using distfix notation, we choose to over- ride the generic definition. Nevertheless, the class declaration for Show will have given rise to the generic instance declaration
+instance (Show a, Show b) ⇒ Show (a ∗ b) where
+showsPrec d (x :∗: y )
+= showsPrec d x ++ "." ++ showsPrec d y.
+Recall that products a ∗ b are used to represent the arguments of a construc- tor. Consequently, the generic instance declaration specifies the layout of constructor arguments: they are shown consecutively separated by spaces.
+Inferring instance contexts
+When a class has generic methods, one can give an instance declaration with- out providing the code for any of the methods. But one still has to provide the context for the instance declaration. For example, one could not write
+instance Eq (List a)
+because the typechecker would complain about a missing (Eq a) constraint. Instead one must write
+instance Eq a ⇒ Eq (List a).
+In contrast, the existing deriving mechanism infers the necessary instance context. The obvious question is: could the compiler infer the instance context in our new scheme? For example, we might write
+instance (.. .) ⇒ Eq (List a)
+indicating that the compiler should fill in the missing context “(.. .)”. Indeed, we might want to allow such an abbreviation in any type signature, allowing one to write, say,
+f :: (.. .) ⇒ a → a.
+The ability to write such partial type signatures, with the ellipsis filled in by type inference, has been discussed on the Haskell mailing list, and looks per- fectly feasible from a technical standpoint. For instance declarations matters
+
+are still feasible, (albeit a little trickier, involving a fixpoint iteration) for first- order kinded types, but we believe that it is infeasible for higher-order kinded types (see Section 7.3).
+In any case, this issue is entirely separate from our main theme, so we do not discuss it further.
+
+Mapping functions
+We have now presented the design as seen by the programmer. Before we can describe the implementation, however, we need to pause to introduce bidirectional maps, which are an essential foundation to the implementation.
+Recall from Section 3.5 our general plan for filling in the generic method of an instance declaration. Suppose we have the following class declaration:
+class C a where
+op :: Op a.
+We will deal only with single-parameter type classes, but see Section 9. We also assume, for notational clarity, that the type of method op is given simply by Op a. We can always introduce a type synonym to make this so 4 . Now suppose that the programmer writes the instance declaration
+instance ctx ⇒ C (T a¯).
+where ctx is a context, and a¯ is a sequence of type variables. How is the
+compiler to fill in the definition of method op? Following Section 3.5 it can fill in thus:
+instance ctx ⇒ C (T a¯) where
+op = adapt -Op (op :: Op (T◦ a¯)).
+
+That is, we call op at type T◦
+a¯, to produce a value of type Op (T◦
+a¯),
+
+and then convert the value to Op (T a¯). The function adapt -Op does this
+impedance-matching by converting a function that works on values of type
+T◦ a¯ to one that works on T a¯.
+adapt -Op :: ∀a¯ . Op (T◦ a¯) → Op (T a¯)
+Clearly, how adapt -Op works depends on the form of Op, the type of the
+
+
+4 Technically, Haskell type synonyms are not powerful enough to do such an abbreviation for a method like properFraction:
+class RealFrac a where
+properFraction :: (Integral b) ⇒ a → (b, a).
+since its type has a context at the beginning. But we will pretend that such an abbreviation is possible.
+
+method. Here are some examples:
+type In a	= a → String
+adapt -In	:: ∀a¯ . In (T◦ a¯) → In (T a¯)
+adapt -In	= λf → f · from-T
+type Out a	= String → a
+adapt -Out	:: ∀a¯ . Out (T◦ a¯) → Out (T a¯)
+adapt -Out	= λf → to-T · f
+type Both a = a → a
+adapt -Both	:: ∀a¯ . Both (T◦ a¯) → Both (T a¯)
+adapt -Both	= λf → to-T · f · from-T. 
+These adapt functions use the functions to-T and from-T , that convert be-
+
+tween T
+a¯ and T◦ a¯; they were introduced in Section 3.3. Notice that both
+
+to-T and from-T are needed; one by itself will not do. Furthermore, while we
+define the class, and hence the Op types, once, we may write instances of that class at many different types, T . So we want to abstract out the to-T and from-T functions from the adapt functions (note that a◦ is a type variable below):
+adapt -Both'	:: ∀a a◦ . (a◦ → a) → (a → a◦)
+→ (Both a◦ → Both a)
+adapt -Both' to from = λf → to · f · from
+adapt -Both	= adapt -Both' to-T from-T
+It turns out to be convenient to package up the to-T and from-T functions into an embedding-projection pair :
+data EP a a◦ = EP {to :: a◦ → a, from :: a → a◦ }.
+Here EP a a◦ is just a pair of functions, one to convert in one direction and one to convert back. Now we can write
+adapt -Both''	:: ∀a a◦ . EP a a◦
+→ (Both a◦ → Both a) adapt -Both'' ep-a = λf → to ep-a · f · from ep-a conv -T	:: ∀a¯ . EP (T a¯) (T ◦ a¯)
+conv -T	= EP {to = to-T, from = from-T }
+adapt -Both	= adapt -Both'' conv -T. 
+The last step is to make the adapt function itself return an embedding- projection pair, rather than just the “to” function; and at this stage we adopt the name bimap — for “bidirectional mapping”:
+bimap-Both :: ∀a a◦ . EP a a◦ → EP (Both a) (Both a◦) bimap-Both ep-a
+= EP {to = λf → from ep-a · f · to ep-a, from = λf → to ep-a · f · from ep-a }
+adapt -Both = to (bimap-Both conv -T ).
+
+
+It is not at all obvious why we construct mappings in both directions, only to discard one of them when we use it, but it turns out to be essential when constructing bimap for arbitrary types, as we will see in the next section.
+
+Generating bidirectional mapping functions
+In the last section we generated bimap-Both for a particular method type Both a. We also observed that appropriate code depends on the structure of the type of the method, so the million-dollar question is: how do we gener- ate the bidirectional maps for arbitrary method types? We do it simply by induction over the type of the method, thus:
+bimap-Op  :: ∀a a◦ . EP a a◦ → EP (Op a) (Op a◦) bimap-Op ep-a = bimap{Op a }[a := ep-a ].
+This definition is not proper Haskell; bimap should be thought of as a meta- function, evaluated at compile time, that returns a Haskell expression. It takes as arguments: a type (written in curly braces), and an environment Q mapping type variables to expressions. The syntax [a := ep-a ] means an environment that binds a to ep-a.
+We define bimap by induction on the structure of type expressions:
+bimap{a }Q	= Q(a) bimap{(→)}Q = bimap-Arrow bimap{T }Q	= bimap-F
+bimap{t u }Q	= (bimap{t }Q) (bimap{u }Q)
+where
+bimap-Arrow :: ∀a a◦ b b◦ . EP a a◦ → EP b b◦
+→ EP (a → b) (a◦ → b◦)
+bimap-Arrow ep-a ep-b
+= EP {to = λf → to ep-b · f · from ep-a, from = λf → from ep-b · f · to ep-a }.
+The bimap{T } case deals with type constructors other than (→), which we discuss in Section 5.2. Let us take an example. Recall our Both type:
+type Both a = a → a.
+Setting Q = [a := ep-a ] we have
+bimap-Both ep-a
+= bimap{a → a }Q
+= (bimap{(→) a }Q) (bimap{a }Q)
+= ((bimap (→) Q) (bimap{a }Q)) (bimap{a }Q)
+= bimap-Arrow ep-a ep-a
+= EP {to = λf → to ep-a · f · from ep-a }, from = λf → from ep-a · f · to ep-a.
+
+
+Mapping over data types
+What if there is a data type involved? For example in the type of readBin, there is a pair in the result type:
+type ReadBin a = Bin → (a, Bin).
+If we just try our current scheme we get stuck:
+bimap-ReadBin ep
+= bimap{Bin → (a, Bin)}Q
+= bimap-Arrow (bimap{Bin }Q) (bimap{(a, Bin)}Q).
+Now, since Bin is not a parameterised type, there is nothing to do,
+bimap-Bin :: EP Bin Bin bimap-Bin = id -EP
+id -EP	:: ∀a . EP a a
+id -EP	= EP {to = λx → x , from = λx → x }
+whereas pairs are parameterised over two types, so we must push the mapping functions inside:
+bimap-Pair :: ∀a a◦ b b◦ . EP a a◦ → EP b b◦
+→ EP (a, b) (a◦, b◦)
+bimap-Pair ep-a ep-b
+= EP {to = λ(x◦, y◦) → (to ep-a x◦, to ep-b y◦),
+from = λ(x, y ) → (from ep-a x, from ep-b y)}.
+In general, we can define bimap-F by induction on the structure of data type declarations. The mapping function for the data type
+data T a1 ... ak = K1 t11 ... t1m1 | · · ·| Kn tn1 ... tnmn
+is given by bimap-F displayed in Fig. 1. Now, what is the type of this bidi- rectional map? The answer is simple yet mind-boggling: the type of bimap-F depends on the kind of T . Assume that T has kind * as, for instance, Bin. Then the bidirectional map simply has type EP T T (and, in fact, bimap-F = id -EP ). If T has kind * → * as all the Op’s have, then bimap-F ’s type is close to that of an “ordinary” mapping function:
+bimap-F :: ∀a a◦ . EP a a◦ → EP (T a) (T a◦).
+A more involved kind, say (* → *) → (* → *), gives rise to a more complicated type:
+bimap-F :: ∀f f ◦ . (∀b b◦ . EP b b◦ → EP (f b) (f ◦ b◦))
+→ (∀a a◦ . EP a a◦
+→ EP (T f a) (T f ◦ a◦)).
+Now bimap-F has a so-called rank-2 type signature [12]. Roughly speaking, bimap-F takes bidirectional maps to bidirectional maps (this is why the ar- guments of bimap-F are called bimap-ai). In general, if T has kind n, then bimap-F has type Bimap{n}T T where Bimap is defined by induction on the
+
+bimap-F bimap-a1 ... bimap-ak
+= EP {to = to-F, from = from-F }
+where
+to-F (K1 x11 ... x1m1 )
+= K1 (to (bimap{t11 }Q) x11) ... (to (bimap{t1m1 }Q) x1m1 )
+... 
+to-F (Kn xn1 ... xnmn )
+= Kn (to (bimap{tn1 }Q) xn1) ... (to (bimap{tnmn }Q) xnmn )
+from-F (K1 x11 ... x1m1 )
+= K1 (from (bimap{t11 }Q) x11) ... (from (bimap{t1m1 }Q) x1m1 )
+... 
+from-F (Kn xn1 ... xnmn )
+= Kn (from (bimap{tn1 }Q) xn1) ... (from (bimap{tnmn }Q) xnmn )
+Q = [a1 := bimap-a1,..., ak := bimap-ak ]
+Figure 1. The bidirectional mapping function for the data type T .
+structure of kinds:
+Bimap{*}t t◦ = EP t t◦ Bimap{n1 → n2 }t t◦
+= ∀a a◦ . Bimap{n1 }a a◦ → Bimap{n2 }(t a) (t ◦ a◦).
+If n has order n, then Bimap{n} is a rank-n type. This poses no problems, however, since the Glasgow Haskell Compiler internally uses a variant of the polymorphic λ-calculus [17].
+We will say a bit more about higher-order kinded types in Section 7. For further information on kind-indexed types such as Bimap the reader if referred to [7].
+
+Implementing generic default methods
+Now, at last, we are ready to tackle the implementation. We describe it as a Haskell source-to-source translation, performed (at least notionally) prior to type checking. Why? The type checker already does a lot of what we require. Also we probably have a better chance that generic default methods will work smoothly with complications such as multi-parameter type classes [16], implicit parameters [13], and functional dependencies [11].
+The source-to-source translation goes as follows. For each data type decla- ration, T , we generate the following:
+✷ For each constructor K a value con-K of type ConDescr that describes the properties of the constructor (Section 6.1).
+✷ A type synonym, T◦, for T ’s generic representation type (Section 6.2).
+
+✷ An embedding-projection pair conv -F :: ∀a¯ . EP (T
+a¯) (T◦ a¯), that con-
+
+verts between T and its generic representation T◦ (Section 6.3).
+
+For each class declaration, for class C , we generate the following (see Sec- tion 6.4):
+✷ An emaciated class declaration for C , generated simply by omitting the generically-defined methods.
+✷ For each generic method op :: Op a in the class declaration, a bidirectional map bimap-Op :: ∀a a◦ . EP a a◦ → EP (Op a) (Op a◦) (see Section 5).
+✷ Instance declarations for C 1, C (a + b), C (a ∗ b) and C (c of a), all obtained by selecting the eponymous equations from the original class declaration (see Section 3.4).
+For each instance declaration we generate (see Section 6.5):
+✷ An extended instance declaration, obtained by adding definitions for the generic methods that are not specified explicitly in the instance declaration.
+Constructors
+For each constructor, K , in a data type declaration, we produce a value of type ConDescr that gives information about the constructor (in fact, the type ConDescr used in the compiler is slightly more elaborate):
+data ConDescr = ConDescr {name :: String,
+arity :: Int,
+ﬁxity :: Fixity }.
+As an example, for the List data type we generate:
+con-Cons, con-Nil :: ConDescr
+con-Cons	= ConDescr "Cons" 2 NoFixity con-Nil	= ConDescr "Nil" 0 NoFixity.
+Generic representation types
+For each data type, T , we produce a type synonym T◦, for its generic repre- sentation type. For example, for the data type
+data List a = Cons a (List a) | Nil
+we generate the representation type
+type List ◦ a = con-Cons of (a ∗ List a)+ con-Nil of 1.
+Our generic representation type constructors are just unit, sum, product, and “c of ”. In particular, there is no recursion operator. Thus, we observe that List ◦ is just a non-recursive type synonym: List (not List ◦) appears on the right-hand side. So List ◦ is not a recursive type; rather, it expresses just the top “layer” of a list structure, leaving the original List to do the rest. But as we have seen, this is enough: a recursive function just does one “layer” of recursion at a time.
+This is unusual compared to other approaches. In PolyP [8], for instance, there is an additional type pattern for type recursion (at kind * → *). A very
+
+significant advantage here is that there is no problem with mutually-recursive data types, nor with data types with many parameters, both of which make explicit recursion operators extremely clumsy and hard to use in practice.
+Our design makes do with just binary sum and product. Algebraic data types with many constructors, each of which has many fields, are encoded as nested uses of sum and product. The exact way in which the nesting is done is unimportant to our method. For example:
+data Color   = Red | Blue | Green
+type Color◦  = con-Red of 1
++ (con-Blue of 1+ con-Green of 1)
+data Tree a b  = Leaf a | Node (Tree a b) b (Tree a b)
+type Tree◦ a b = con-Leaf of a
++ con-Node of (Tree a b ∗ (b ∗ Tree a b)).
+One may wonder about the efficiency of translating a user-defined data type into a generic form before operating on it, especially if everything is encoded with only binary sums and products. However, sufficiently vigorous inlining means that the generic data representations never exist at run-time (see Sec- tion 6.6). But, in fact, we might want to explore space-time trade-offs, by getting much more compact code in exchange for some data translation. Our design allows this trade-off to be made on a case-by-case basis.
+Whether the encoding into sums and products is done in a linear or binary- sub-division fashion may or may not affect efficiency, depending on how vig- orous the inlining is.
+Embedding-projection pairs
+For each data type T , we also generate functions to convert between T and T◦. We saw the conversion functions for List in Section 3.3. The process is entirely straightforward, driven by the encoding. For example:
+from-Color     :: Color → Color◦
+from-Color Red	= Inl (Con con-Red Unit )
+from-Color Blue	= Inr (Inl (Con con-Blue Unit )) from-Color Green = Inr (Inr (Con con-Green Unit )) to-Color :: Color◦ → Color
+to-Color (Inl (Con con-Red Unit ))	= Red to-Color (Inr (Inl (Con con-Blue Unit )))	= Blue
+to-Color (Inr (Inr (Con con-Green Unit ))) = Green.
+For bimap we have to package the two conversion functions into a single value:
+conv -List	:: ∀a . EP (List a) (List ◦ a)
+conv -List	= EP {to = to-List , from = from-List }
+conv -Color :: EP Color Color ◦
+conv -Color = EP {to = to-Color, from = from-Color }.
+
+
+Translating class declarations
+For each generic method op ::Op a contained in a class declaration we generate a bidirectional map
+bimap-Op :: ∀a a◦ . EP a a◦ → EP (Op a) (Op a◦)
+that allows us to convert between types and representation types (the defini- tion of bimap-Op is given in Section 5).
+Furthermore, we produce instance declarations
+instance C 1
+instance (C a, C b) ⇒ C (a + b) instance (C a, C b) ⇒ C (a ∗ b) instance (C a) ⇒ C (c of a)
+whose bodies are filled with the generic methods from the original class dec- laration (see Section 3.4). If an equation for a type pattern is missing, the method of the corresponding instance is undefined. There is, however, one important exception to this rule: if no equation is given for the type pattern c of a as, for example, in the classes Eq and Binary , we define the generic methods of the C (c of a) instance by:
+op{c of a } = to (bimap-Op (con-EP c)) (op :: Op a)
+where con-EP is given by the following pseudo-Haskell code (which defines a family of functions):
+con-EP c :: ∀a . EP a (c of a)
+con-EP c = EP {to = λx → Con c x ,
+from = λ(Con c x ) → x }.
+Again, we employ the bidirectional map to convert between two isomorphic types.
+
+Translating instance declarations
+An instance declaration for type T is extended by filling in implementations for the methods. More specifically, if the method op is not specified and if it enjoys a generic default definition, then the following equation is supplemented:
+op = to (bimap-Op conv -F ) (op :: Op T◦).
+That’s it.
+
+
+Inlining
+It does not sound very efficient to translate a value from T
+
+a¯ to T◦
+
+a¯ and
+
+then to operate on it, but we believe that a bit of judicious inlining can yield
+more or less the code one would have written by hand. Let us consider, for example, showBin at type List . The showBinList method will look something
+
+like this:
+showBinList	 :: (Binary a) ⇒ List a → Bin showBinList xs = showBin (from-List xs) type List ◦ a	= (a ∗ List a)+1 
+from-List	:: List a → List ◦ a.
+The call to showBin is at type List ◦ a, so the overloading can be resolved statically. Assuming that the method bodies (given in Section 3.1) are inlined, we get:
+showBinList xs
+= case from-List xs of
+Inl z → 0 : case z of
+(x :∗: y ) → showBin x ++ showBin y Inr z → 1 : case z of Unit → [ ].
+But remember that from-List also has a simple, non-recursive definition:
+from-List (Cons x xs) = Inl (x :∗: xs)
+from-List Nil	= Inr Unit.
+If we inline this definition in showBinList and simplify using standard trans- formations, we get
+showBinList xs
+= case xs of
+Cons x y → 0 : showBin x ++ showBin y Nil → 1 :[ ],
+which is about as good as we can hope for.
+
+Higher-order kinded types
+Functional programmers love abstraction. In Haskell we can, for instance, abstract over the List data type in
+data Rose a = Branch a (List (Rose a)) to obtain the more general type:
+data GRose f a = GBranch a (f (GRose f a)).
+Here, the type variable “f ” ranges over type constructors, rather than types. Formally, GRose has kind (* → *) → * → *. There are numerous examples of such type definitions in [14,5]. Alas, it is impossible to define many instance declarations for GRose in Haskell at all. In this section we describe the prob- lem and a solution. This section is quite independent of the rest of the paper. Though we became aware of the issue when working on generic programming, we propose an extension to Haskell that is completely orthogonal to generic programming.
+
+What’s the problem?
+Consider first defining an instance for Binary (Rose a) by hand — we ignore
+readBin here:
+instance (Binary a) ⇒ Binary (Rose a) where
+showBin (Branch x ts) = showBin x ++ showBin ts.
+The first call to showBin on the right hand side requires that Binary a should hold; the context, (Binary a), takes care of that. The second call is at type List (Rose a). Assuming we have an instance elsewhere of the form
+instance (Binary t ) ⇒ Binary (List t )
+the second call requires Binary (Rose a), and there is an instance declaration for that too — it gives rise to a recursive call to showBin.
+But matters are not so straightforward when we want to define an instance
+Binary (GRose f a). We might try
+instance (???) ⇒ Binary (GRose f a) where
+showBin (GBranch x ts) = showBin x ++ showBin ts.
+The context (???) must account for the calls to showBin on the right-hand side. The first one is fine: it requires Binary a as before. But the latter is bad news: it requires Binary (f (GRose f a)), and we certainly cannot write
+instance (Binary a, Binary (f (GRose f a)))
+⇒ Binary (GRose f a) where
+showBin (GBranch x ts) = showBin x ++ showBin ts.
+This is not legal Haskell and, even if it were, the typechecker would diverge. Indeed, no ordinary Haskell context will do.
+
+A solution
+What we need is a way to simplify the predicate f (GRose f a). The trick is to take the “constant” instance declaration that we assumed for Binary (List a) above, and abstract over it:
+instance (Binary a, ∀b . (Binary b) ⇒ Binary (f b))
+⇒ Binary (GRose f a) where
+showBin (GBranch x ts) = showBin x ++ showBin ts.
+Now, as well as (Binary a), the context also contains a polymorphic predicate. This predicate can be used to reduce the predicate Binary (f (GRose f a)) to just Binary (GRose f a), and we have an instance declaration for that.
+Viewed in operational terms, the predicate (Binary a) in a context corre- sponds to passing a dictionary for class Binary . A predicate ∀b . Binary b ⇒ Binary (f b) corresponds to passing a dictionary transformer to the function.
+
+Deriving instance declarations
+Of course, since Binary is a derivable class by virtue of the generic default definitions, we need not define showBin at all. We can simply write
+instance (Binary a, ∀b . (Binary b) ⇒ Binary (f b))
+⇒ Binary (GRose f a)
+and get just the same effect as before. In other words, the deriving mechanism works happily for types of arbitrary kinds.
+Here is a place where a programmer-written context for the instance
+declaration is essential. We could not use the idea of Section 4.4 to write:
+instance (.. .) ⇒ Binary (GRose f a).
+The problem is that there is no “most general instance declaration”. To il- lustrate the point consider the following instance declaration for the abstract type Set :
+instance (Binary a, Ord a) ⇒ Binary (Set a).
+Note that we additionally require that a is an instance of Ord . Now, given the instance declaration for GRose above, we cannot infer Binary (GRose Set Int ) since Set does not satisfy ∀b . (Binary b) ⇒ Binary (Set b). If we require such an instance, we must generalize the GRose instance:
+instance (Binary a, ∀b . (Binary b, Ord b) ⇒ Binary (f b))
+⇒ Binary (GRose f a).
+By adding further class constraints to f ’s context, we can generalize the in- stance declaration even more. Sadly, this implies that there is no “most gen- eral” instance which deriving could infer. Note that this problem does not crop up for first-order kinded types.
+Formalising the extension
+Here is the grammar for generalized instance declarations: instance head ::= instance (ctx 1,..., ctxn ) ⇒ C t
+context ctx ::= ∀a¯ . (ctx 1,..., ctxn ) ⇒ C t .
+A context of the form ∀a¯ . (ctx 1,..., ctxn ) ⇒ C t with n ≥ 1 is called a polymorphic predicate. Note that for n = 0 we have “ordinary” Haskell 98 predicates.
+Implementing generalized instance declarations
+How do we translate a method call op :: Op T ? We must create a C -dictionary for T if op is a method of class C . In the higher-order kinded situation, we may need to create a dictionary transformer to pass to op. Fortunately, it turns out that the now-standard machinery to construct the correct dictionary to pass can easily be extended to construct dictionary transformers too.
+
+At a call site we have to solve the following problem: we have a set of assumptions H and a single clause H , the dictionary (transformer) required, and we want to know whether H is a logical consequence of H. Additionally we return an expression for the dictionary (transformer) for H . We use the following notation: H ▶ H '→ d means that d is a dictionary (transformer) expression that shows how H can be deduced from H.
+The assumptions H embody:
+✷ Any instance declarations in scope. For example:
+Eq Int '→ dict -Eq -Int
+∀a . Eq a ⇒ Eq (List a) '→ dict -Eq -List .
+✷ Information about superclasses. For example:
+∀a . Ord a ⇒ Eq a '→ dict -Eq -Ord.
+This says that if we have Ord a we can deduce Eq a; in concrete terms we witness this fact by the selector function dict -Eq -Ord which selects the Eq dictionary from the Ord one.
+✷ Constraints from the type signature. For example, if we are checking types for the function
+
+f	::
+H¯ ⇒ T
+
+f x = ... 
+
+then we put the assumptions H¯
+in our assumption set, and try to deduce
+
+all the dictionaries that are needed by calls in the body of f .
+
+We use the following inference rules (A stands for
+Conjunction, Mp for Modus ponens):
+(H '→ d ) ∈ H
+Assumption, C for
+
+H ▶ H '→ d	(A)
+
+H ▶ H1 '→ d1	···	H ▶ Hn '→ dn
+
+H ▶ (H ,..., H ) '→ (d ,..., d
+(C)
+)
+
+1	n	1	n
+
+
+H ▶ (∀a¯ . H¯
+⇒ Q ) '→ f	H ▶ H¯ Qθ '→ d
+H ▶ P '→ (f d )	(Mp)
+
+where Q = [a¯ := x¯ ] is a renaming substitution (the xi are fresh variables) and θ = match(QQ, P ) is the result of matching QQ against P (note that only the variables in QQ are bound).
+So far, these rules are entirely standard, see, for instance, [10]. To these we add one new rule (DR stands for Deduction Rule).
+H, (H¯ Q '→ v ) ▶ QQ '→ d
+
+H ▶ (∀a¯ . H¯
+(DR)
+⇒ Q ) '→ (λv → d )
+
+where Q = [a¯:=c¯ ] is a Skolem substitution, that is, the ci are Skolem constants.
+Thus, to deduce the polymorphic predicate ∀a¯ . H¯ ⇒ Q we add the body H¯ to
+the set of assumptions and try to deduce Q . The Skolem substitution ensures that this derivation works for all a¯.
+The new rule is called Deduction Rule because it resembles the deduc- tion theorem of first-order logic. It is also reminiscent of the usual typing
+rule for λ-abstraction while Modus ponens corresponds to the typing rule
+for application. In fact, these two rules capture dictionary abstraction and dictionary application.
+Here is an example of a deduction using these rules. Later lines are deduced from earlier ones using the specified rule (we abbreviate Binary by B and Ord by 0).
+H = {Ord Int '→ d -O -I , Binary Int '→ d -B -I , (∀a . (Binary a, Ord a)
+⇒ Binary (Set a)) '→ d -B -S }
+(4) H ▶ 0 Int '→ d -O -I	A
+(3) H ▶ B Int '→ d -B -I	A
+(2) H ▶ (B Int, 0 Int ) '→ (d -B -I , d -O -I )	C(3,4)
+(1) H ▶ (∀a . (B a, 0 a) ⇒ B (Set a)) '→ d -B -S A
+(0) H ▶ B (Set Int ) '→ d -B -S (d -B -I , d -O -I )	MP(1,2)
+Here is another example, this time of a higher-order case:
+H = {Binary Int '→ d -B -I ,
+(∀a . (Binary a) ⇒ Binary (List a)) '→ d -B -L, (∀f a . (Binary a, ∀b . (Binary b) ⇒ Binary (f b))
+⇒ Binary (GRose f a)) '→ d -B -G }.
+We abbreviate H, (Binary c '→ v ) by H'.
+'→ d -B -G (d -B -I , λv → d -B -G (v, d -B -L)) MP(1,2)
+
+The new inference rule kicks in at line (4) and introduces a new assumption,
+B c '→ v , that is used in line (8).
+Related work
+This paper improves on our earlier work [4] in several respects. First, generic definitions now appear solely in class declarations as generic default methods. In the previous design generic definitions and classes were two competing fea- tures. We feel that the new proposal fits better with “the spirit of Haskell”. Second, we have spelled out the implementation in considerable detail. In particular, the notion of generic representation types and the conversion be- tween types and representation types has been made precise. Third, we have described a separate extension that allows the programmer to define instance declarations for higher-order kinded types. The need for this extension was noted in [4] but no solution was given.
+Though there is a considerable amount of work on generic programming [18,3,9] this is the first paper we are aware of — apart from PolyP [8] — that aims at adding generic features to an existing functional language. The PolyP extension offers a special construct (essentially, a type case) for defining generic functions. The resulting definitions are similar to ours (modulo no- tation) except that the generic programmer must additionally consider cases for type composition and for type recursion. Furthermore, PolyP is restricted to regular data types of kind * → *, whereas our proposal works for all types of all kinds. This is quite a significant advantage. In particular, our proposal deals gracefully with mutually-recursive data types and with data types with many parameters, both of which make explicit recursion operators clumsy and hard to use in practice.
+The DrIFT tool [19] is a pre-processor for Haskell that allows the pro- grammer to specify rules that explain how to implement a deriving clause for classes other than the standard classes. The rules are specified as Haskell func- tions, mapping a type representation to Haskell program text. DrIFT has the significant advantage of technical simplicity. However, our system offers much stronger static guarantees: if a generic default declaration passes the type checker, then so will any instance declarations that use it. In DrIFT, a rule may typecheck fine, while producing Haskell text that itself will not typecheck. We also believe that our closer integration with the language design (achiev- ing generic programming by enriching default-method declarations) make the programmer’s life easier.
+
+Conclusions and further work
+This paper describes two separate extensions to Haskell. The first exten- sion supports generic programming through a new form of default method declaration. The second extension allows one to define instance declarations
+
+for higher-order kinded types through the notion of polymorphic predicates. Though these extensions are orthogonal to each other, the second ensures that one gets the most out of the first one (surely, one wants to derive instances for higher-order kinded types).
+We believe that our proposals fit nicely into the Haskell language:
+✷ They fit with the “spirit of Haskell”. At first sight, generic programming and Haskell type classes are in competition, but we use generic program- ming to smoothly extend the power of type classes.
+✷ We are able to explain what “deriving” means in a systematic way. The ad hoc nature of deriving has long been considered a wart, and programmers often want to add new “derivable” classes — that is, classes for which you can say “deriving (C )”. Now they can. 
+✷ Generic definitions can be over-ridden at particular types by programmer- supplied instance declarations. This sets our approach apart from other generic programming schemes. Not only is this useful for primitive types, but generic methods are often inapplicable for abstract types — consider equality on sets represented as unordered lists, for example.
+✷ There is no run-time passing or case-analysis of types, beyond Haskell’s existing dictionary passing. Of course, dictionary-passing is a sort of type passing, but it already exists in Haskell, and it would be extremely tiresome to introduce another, overlapping mechanism.
+Nor are there any new requirements to inspect the run-time represen- tation of a value, a feature of some proposals. Our proposal is a 100% compile-time transformation.
+✷ Like Haskell’s type classes, static specialisation is possible to eliminate run-time overhead (see Section 6.6).
+✷ Our scheme deals successfully with constructor names and labels. We have to admit, though, that this is one of the trickier corners of the design.
+✷ We cunningly re-use Haskell’s type-class mechanism to instantiate the generic methods for particular types, by expressing the generic methods as generic instance declarations (Section 4.3). This approach means that we do not need to explain or implement exactly how this code instanti- ation takes place (e.g. how much is done at compile time). Instead we just piggy-back on an existing piece of implementation technology. (This is really a point about the implementation, not about the design.)
+There seem to be two main shortcomings. Firstly, the details of implement- ing the generic default methods (representation types, bidirectional mapping functions, and so on) are undeniably subtle, which is often a bad sign. Sec- ondly, the technology to deal with constructor and field labels does not fit in as elegantly as we would wish.
+We are currently implementing the proposal and we hope to make the new features available in the next release of the Glasgow Haskell Compiler.
+
+There are several directions we plan to explore in the future:
+✷ Currently, generic default declarations may be given only for type classes. However, the theory [6] also deals with constructor classes whose type parameter range over types of first-order kind. Consequently, we plan to lift this restriction.
+✷ In Haskell 98 instance heads must have the general form C (T a¯) where
+a¯ is a sequence of distinct variables. The Glasgow Haskell Compiler, how- ever, allows for non-general instance heads such as C (List Char ). We are confident that the implementation scheme for generic methods can be extended to deal with this extra complication.
+✷ Multi-parameter type classes are on the wish list of many Haskell program- mers. So it would be a shame if the generic extension failed to support them. Now, multi-parameter classes correspond to generic definitions with multiple type arguments, which are theoretically well understood. So we are confident that we can also deal with this generalization.
+
+Acknowledgements
+We would like to thank three anonymous referees for many valuable comments. Thanks are furthermore due to Jeremy Gibbons for the Haskell equals sign.
+
+References
+Roland Backhouse, Patrik Jansson, Johan Jeuring, and Lambert Meertens. Generic Programming — An Introduction. In S. Doaitse Swierstra, Pedro R. Henriques, and Jose N. Oliveira, editors, 3rd International Summer School on Advanced Functional Programming, Braga, Portugal, volume 1608 of Lecture Notes in Computer Science, pages 28–115. Springer-Verlag, Berlin, 1999.
+Richard Bird, Oege de Moor, and Paul Hoogendijk. Generic functional programming with types and relations. Journal of Functional Programming, 6(1):1–28, January 1996.
+Robin Cockett and Tom Fukushima. About Charity. Yellow Series Report 92/480/18, Department of Computer Science, University of Calgary, June 1992.
+Ralf Hinze. A generic programming extension for Haskell. In Erik Meijer, editor, Proceedings of the 3rd Haskell Workshop, Paris, France, September 1999. The proceedings appeared as a technical report of Universiteit Utrecht, UU-CS- 1999-28.
+Ralf Hinze. Manufacturing datatypes. Journal of Functional Programming, Special Issue on Algorithmic Aspects of Functional Programming Languages, 2001. To appear.
+
+
+Ralf Hinze. A new approach to generic functional programming. In Thomas W. Reps, editor, Proceedings of the 27th Annual ACM SIGPLAN- SIGACT Symposium on Principles of Programming Languages (POPL’ 00), Boston, Massachusetts, pages 119–132, January 2000.
+Ralf Hinze. Polytypic values possess polykinded types. In Roland Backhouse and J.N. Oliveira, editors, Proceedings of the Fifth International Conference on Mathematics of Program Construction (MPC 2000), July 2000.
+Patrik Jansson and Johan Jeuring. PolyP—a polytypic programming language extension. In Conference Record 24th ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages, POPL’97, Paris, France, pages 470–482. ACM-Press, January 1997.
+C.B. Jay, G. Bell`e, and E. Moggi. Functorial ML. Journal of Functional Programming, 8(6):573–619, November 1998.
+Mark P. Jones. Qualiﬁed Types: Theory and Practice. Cambridge University Press, 1994.
+Mark P. Jones. Type classes with functional dependencies. In G. Smolka, editor, Proceedings of the 9th European Symposium on Programming, ESOP 2000, Berlin, Germany, volume 1782 of Lecture Notes in Computer Science, pages 230–244. Springer-Verlag, March 2000.
+Daniel Leivant. Polymorphic type inference. In Proc. 10th Symposium on Principles of Programming Languages, 1983.
+Jeffrey R. Lewis, Mark B. Shields, Erik Meijer, and John Launchbury. Implicit parameters: Dynamic scoping with static types. In Thomas W. Reps, editor, Proceedings of the 27th Annual ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages, Boston, Massachusetts, pages 108–118, January 2000.
+Chris Okasaki. Purely Functional Data Structures. Cambridge University Press, 1998.
+Simon Peyton Jones and John Hughes, editors.  Haskell 98 — A Non-strict, Purely Functional Language, February 1999. Available from http://www.haskell.org/definition/.
+Simon Peyton Jones, Mark Jones, and Erik Meijer. Type classes: Exploring the design space. In Proceedings of the Haskell Workshop, 1997.
+Simon L. Peyton Jones.  Compiling Haskell by program transformation: A report from the trenches. In Hanne Riis Nielson, editor, Programming Languages and Systems—ESOP’96, 6th European Symposium on Programming, Link¨oping, Sweden, 22–24 April, volume 1058 of Lecture Notes in Computer Science, pages 18–44. Springer-Verlag, 1996.
+Karl Fritz Ruehr. Analytical and Structural Polymorphism Expressed using Patterns over Types. PhD thesis, University of Michigan, 1992.
+
+
+Noel Winstanley.	A type-sensitive preprocessor for Haskell.	In Glasgow Workshop on Functional Programming, Ullapool, 1997.

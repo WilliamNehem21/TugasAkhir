@@ -1,0 +1,303 @@
+Electronic Notes in Theoretical Computer Science 131 (2005) 99–110 
+www.elsevier.com/locate/entcs
+
+
+Fast Escape Analysis for Region-based Memory Management
+G. Salagnac1 ,3	S. Yovine1 ,3	D. Garbervetsky2 ,4
+
+Abstract
+We present an algorithm for escape analysis inspired by, but more precise than, the one proposed by Gay and Steensgaard [11]. The primary purpose of our algorithm is to produce useful information to allocate memory using a region-based memory manager. The algorithm combines intraprocedural variable-based and interprocedural points-to analyses. This is a work in progress towards achieving an application-oriented trade-off between precision and scalability. We illustrate the algorithm on several typical programming patterns, and show experimental results of a first prototype on a few benchmarks.
+Keywords: Escape analysis. Dynamic memory management.
+
+
+Introduction
+Garbage collection (GC) [14] is not used in real-time embedded systems. The reason is that temporal behavior of dynamic memory reclaiming is extremely difficult to predict. Several GC algorithms have been proposed for real-time embedded applications (e.g., [12,17,16,13]). However, these approaches are not portable (as they impose restrictive conditions on the underlying execu- tion platform), do require additional memory, and/or do not really ensure
+
+1 VERIMAG, Centre Equation, 2 Ave.	Vignate, 38610 Gi`eres, France.	E-mail:
+firstname.lastname@imag.fr.
+2 School of Computer Science, Universidad de Buenos Aires, Argentina.	E-mail:
+diegog@dc.uba.ar.
+3 Partially supported by projects DYNAMO (Min. Research, France) and MADEJA (Rhoˆne-Alpes, France).
+4 Partially supported by projects ANCyT grant PICT 11738 and IBM Eclipse Innovation
+Grants.
+
+
+1571-0661 © 2005 Elsevier B.V. Open access under CC BY-NC-ND license.
+doi:10.1016/j.entcs.2005.01.026
+
+
+predictable execution times.
+An appealing solution to overcome the drawbacks of GC algorithms, is to allocate objects in regions (e.g., [18]) which are associated with the lifetime of a computation unit (typically a thread or a method). Regions are freed when the corresponding unit finishes its execution. This approach is adopted, for instance, by the Real-Time Specification for Java (RTSJ) [2], where regions can be associated to runnables, and by [10], which implements a library and a compiler for C. These region-based approaches define APIs which can be used to explicitly and manually handle allocation and deallocation of objects within a program. However, care must be taken when objects are mapped to regions in order to avoid dangling references. Thus, programming using such APIs is error-prone, mostly because determining objects’ lifetime is difficult. An alternative to programming memory management directly using an API consists in automatically transforming a program so as (a) to replace (whenever possible) “new” statements by calls to the region-based memory allocator, and (b) to place appropriate calls (i.e., guaranteeing absence of dangling references) to the deallocator. Such an approach requires to analyze the program behavior to determine the lifetime of dynamically allocated ob- jects. In [8], analysis is based on profiling, while [9,4] rely on static (points-to
+and escape) analysis.
+Escape analysis aims at conservatively determining if an object escapes from or is captured by a method. Intuitively, an object escapes a method when its lifetime is longer than the method’s lifetime, so it can not be collected when the method finishes its execution. An object is captured by the method when it can be safely collected at the end of its execution.
+Several approaches to escape analysis for Java have been proposed, most of which aim at allocating objects on the stack, and removing unnecessary synchronizations. [1] works on the bytecode, which brings in an additionnal complexity due to the stack-based model. [5,19] use points-to analysis to determine if an object escapes a method through a path in the points-to graph. [11] proposes a fast but very conservative escape analysis, based on solving a simple system of linear constraints obtained from a Static Single Assignment (SSA) form [7] of the program.
+For region-based allocation in Java, we are aware of two works. [9] exploits method-call chains and escape analysis to dynamically map allocation sites to regions associated with methods. [4] defines a points-to analysis to determine regions of objects with similar lifetimes (with instruction-level resolution, as opposed to method-level).
+In this paper, we present an algorithm for escape analysis inspired by, but more precise than, the one proposed in [11]. The primary purpose of our algo-
+
+
+rithm is to produce useful information to allocate memory using a region-based memory manager. The algorithm combines intraprocedural variable-based and interprocedural points-to analyses. This is a work in progress towards achieving an application-oriented trade-off between precision and scalability. We illustrate the algorithm on several typical programming patterns, and show experimental results of a first prototype on a few benchmarks.
+
+The algorithm
+In this section we describe our escape analysis algorithm in detail. We assume the program is in static single assignment form (SSA) [7], that is, every variable is assigned only once in the program. The transformation of the program into SSA comes at a cost, but gives to a flow-insensitive analysis the power of a flow-sensitive one. Our algorithm is mainly based on local variables, instead of on a complex points-to graph, which would be much more expensive to build and to work with. The analysis is based on abstract interpretation [6] and computes several properties for local variables and methods.
+
+Properties
+escape
+For each local variable v of a method, escape(v)∈Escape, where Escape is the lattice in figure 1(a), says whether v may escape from its method, that is, if an object pointed to by v is referenced in a way such that its lifetime may exceed the method.
+A variable v escapes because it is returned (escape(v)=RETURNED) or it is copied into a global variable (escape(v)=STATIC). When a variable is stored into an object field (escape(v)=FIELD), v may escape through a chain of refer- ences. Determining whether v escapes in this case, requires further analysis that will be explained later. The T value stands for variables that escape by several ways, or when the analysis cannot compute a tighter information (e.g., when v is used as a parameter in a non-analyzed method). For ex- ample, in the program shown on figure 1(b) escape(a)=STATIC, escape(b)=⊥, escape(c)=RETURNED, escape(d)=T.
+Notice that escape(v)= ⊥ is not sufficient to say that the object pointed to by v is local to the method. It only means that the method does not create any new reference path from the outside of the method to the object, but the object may already be reachable from outside. This is the case for variable b in figure 1(b) which is an alias of the static variable s.
+
+
+
+
+T
+†	s
+FIELD RETURNED STATIC
+class Test01 { static Object s,t; void m0() {
+Object a=m1(); s=a;
+Object b=m2();
+}
+Object m1() {
+Object c=new Object(); return c;
+
+s	†	3
+⊥
+(a) The escape lattice
+}
+Object m2() {
+Object d=new Object(); s=d;
+return d;
+}
+}
+
+(b) the Test01 program
+Fig. 1. The Escape lattice and the Test01 program
+
+mfresh
+Let MFresh be the lattice: ⊥≤ RETURNED ≤ T. For each method m, mfresh(m)
+∈ MFresh describes how objects returned by m escape: mfresh(m)=⊥ when m does not return any object (it may be void, or return some primitive type value); mfresh(m)=T when returned values are already known to escape from m in a different way; mfresh(m)=RETURNED when m returns an object (or several objects) which does (do) not escape otherwise. If there is no other path leading to this object (see section 2.2.2), the caller of m can capture it.
+
+sites
+Let Sites be У(AllocationSites∪{UNKNOWN}), where AllocationSites is the set of all allocation sites in the program. For each local variable v, sites(v)∈Sites contains all allocation sites that can create an object referenced by v. sites(v) can always be computed at the unique (thanks to SSA) statement where v is defined. To be conservative, if we cannot determine all the sites that v can point to (e.g., because of a not analyzed method call), a “fake” allocation site UNKNOWN is added to sites(v). In the program of figure 1(b), sites(a)= sites(c)
+= {[m1:c=new Object]}, and sites(b) = sites(d) = {[m2:d=new Object]}.
+
+msites
+For each method m, msites(m) is an element of Sites, saying where objects returned by m come from. In the program of figure 1(b), msites(m0) = ∅, msites(m1)= {[m1:c=new Object]}, and msites(m2)= {[m2:d=new Object]}. Notice that, if mfresh(m) = RETURNED, then objects from msites(m) are possi- bly captured by callers of m, but it is not certain. In some complex situations, there can still be a path of references leading to these objects. For example in the program shown on figure 6(a), the e variable is not captured by m0.
+
+isdereferenced
+isdereferenced(v) is true iff v, or one of its aliases, is dereferenced in m. That is, is v.f appears in the right-hand side of an assignment.
+usedasparameter
+usedasparameter(v) is true iff v, or one of its aliases, is used as a concrete parameter in a method call.
+def
+For each variable v, def(v) says how v was defined.
+fielduse
+fielduse shows reference relations between local variables. For each v in m, fielduse(v) is the set of variables u in m such that v may be an alias of u.f (for some field f). fielduse is mainly useful when a variable v escapes by a FIELD: for example, if escape(v)=FIELD, but all variables of fielduse(v) are captured by m, then so is v.
+the mrefs graph
+When objects are passed through several methods, knowledge about local variables is often not sufficient to determine objects’ lifetimes, that’s why a reference graph is needed. Our reference graph is very simple, in order to mini- mize the algorithmic cost of the analysis. mrefs is a subset of AllocationSites× F ields × AllocationSites, where (α, f, β) ∈ mrefs means: “an object created in α, may point, with its f field, to an object created in β”.
+side
+The main goal of our analysis is to determine in which regions to allocate objects. Each method m has an associated region, containing objects which do not escape m. To determine the region, we compute for each variable v of m, where objects pointed to by v live, namely, side(v):
+side(v)=INSIDE, when objects pointed to by v are captured by m. If they are created by m, they can be allocated in m’s region. If they are created by callees, m can ask for them to be allocated in its region, as is described in [9];
+side(v)=OUTSIDE, when objects pointed to by v live longer than m. If they are created by m, they must be allocated outside its stack frame. But such an object may be captured by a caller n of m, in this case m can allocate the object in n’s region.
+
+
+An example is presented on figure 6(a): the RefObject allocated by m2 is cap- tured by m1. Our analysis detects this situation by computing side(a)=OUTSIDE and side(c)=INSIDE.
+
+
+The rules
+The algorithm works in two phases. First, it determines for each variable the values of escape, sites, isdereferenced, usedasparameter, fielduse, def, it builds the mrefsgraph and computes msites and mfresh values. To compute these values, the algorithm solves the least fixpoint in Figures 2 and 3.
+In a second phase, the algorithm uses these values to compute, for each variable, its side value, as presented on figure 4. It is the combination of side and sites that will enable us to instrument the bytecode in order to use a region memory allocator for captured sites.
+
+
+α: v := new
+α ∈ sites(v)
+v:= ϕ(v1..vn)
+def(v)= PHI
+∀i = 1..n
+sites(v) ⊇ sites(vi) escape(v) ± escape(vi) escape(vi) ± escape(v)
+isdereferenced(v) ≥ isdereferenced(vi) isdereferenced(vi) ≥ isdereferenced(v) usedasparameter(v) ≥ usedasparameter(vi) usedasparameter(vi) ≥ usedasparameter(v) fielduse(v) ⊇ fielduse(vi)
+fielduse(vi) ⊇ fielduse(v)
+v := v1
+def(v)= COPY
+other properties: similar to ϕ-expression
+v1.f := v
+escape(v) ± FIELD fielduse(v) e v1 mrefs ⊇ {s1 −f→ s2,
+s1 ∈ sites(v1), s2 ∈ sites(v2)}
+s := v 
+escape(v) ± STATIC
+mrefs ⊇ {UNKNOWN −→ s, s ∈ sites(vi)}
+v := s 
+def(v)= STATIC
+sites(v) e UNKNOWN
+v := p 
+def(v)= PARAM
+sites(v) e UNKNOWN
+other properties: similar to ϕ-expression
+v := constant
+def(v)= CONSTANT
+sites(v) e UNKNOWN
+v := v1.f
+def(v)= FIELD
+isdereferenced(v1) ≥ true
+sites(v) ⊇ {s |∃ s′ ∈ sites(v1), s′ −f→ s }
+If UNKNOWN ∈ sites(vi) sites(v) e UNKNOWN
+returnm v
+escape(v) ± RETURNED mfresh(m) ± escape(v) msites(m) ⊇ sites(v)
+
+
+Fig. 2. Escape analysis rules
+
+v := v0.m(v1..vn)
+∀ m that may be invoked here If istobeprocessed(m)
+sites(v) ⊇ msites(m)
+If mfresh(m) /= RETURNED
+escape(v) ± mfresh(m)
+∀i = 0..n
+usedasparameter(vi) ≥ true
+Let pi the i-th formal parameter of m isdereferenced(vi) ≥ isdereferenced(pi) If ¬escape(pi) ∈ {RETURNED, ⊥}
+escape(vi) ±T 
+mrefs ⊇ {UNKNOWN −→ s, s ∈ sites(vi)}
+If isdereferenced(pi)= true
+mrefs ⊇ {UNKNOWN −→ s |∃ s′ ∈ sites(vi), s′ −→ s)}
+else
+sites(v) e UNKNOWN
+∀i = 0..n
+usedasparameter(vi) ≥ true isdereferenced(vi) ≥ true escape(vi) ±T 
+mrefs ⊇ {UNKNOWN −→ s, s ∈ sites(vi)}
+
+Fig. 3. Escape analysis rules (cont)
+
+First phase
+Most of these rules are simple. They are only intraprocedural information propagation. The only complicated rule is the one on figure 3, which handles method calls. This is not trivial, because we do not want to perform a full points-to analysis, neither to be too conservative about method calls.
+Our analysis is designed to process arbitrary portions of an application. That is why we have an istobeprocessed predicate, that tells if a method must be analyzed or not. If not, for example because the method is native, or unavailable, we must be conservative about it.
+For a not analyzed method, we assume that all parameters escape, and are referenced by the UNKNOWN site.
+On the other hand, if the method is analyzed, then we can be more precise. Obviously, we have sites(v) ⊇ msites(m), that is, v will point to any object returned by m. If these objects have escaped (mfresh(m) /= RETURNED), then the return value is not capturable either. (escape(v) ± mfresh(m))
+To process the parameters of m, we match the formal parameters (pi) with the concrete ones (vi): if pi escapes from m, vi is considered as escaping from the current method, and we put an edge from UNKNOWN to all sites pointed to by vi. If pi does not escape but isdereferenced in m, then we cannot be precise about those references without performing a points-to analysis. In this case, we conservatively consider that all children of vi escape.
+
+Second phase
+
+def(v)
+
+
+
+(1)
+v:= ϕ(v1..vn) or v := v1
+side(v) ± side(vi)
+∀i side(vi) ± side(v)
+
+(3)
+If ∃s ∈ sites(v) s.t. UNKNOWN ~ s
+side(v)= OUTSIDE
+else
+
+
+
+(2)
+If ∃u ∈ fielduse(v) s.t. side(u)= OUTSIDE
+or s.t.isdereferenced(u) ∧ usedasparameter(u)
+side(v)= OUTSIDE
+else
+side(v)= INSIDE
+
+(3)
+Fig. 4. Computation of side(v)
+Once the fixed point is reached, the algorithm computes side(v) for each variable using rules shown in figure 4. This is not a one-pass computation, but a second least fixpoint, because of the (1) and (2) rules:
+The (1) rule says that, if a variable may alias another, then those two variables cannot have different side values.
+Similarly, the (2) rules says that if a variable v is referenced by another variable’s field (e.g. by a u.f=v), v cannot be captured unless u is.
+
+Examples
+Let us consider the example presented in fig.5(a). First, m0 builds a small chained structure, then it calls m1 which makes the last element (t3) escape. As shown on fig.5(b), the analysis of m0 understands the behavior of m0, but as we can only match x with t1, and not a with t2, we cannot keep track of m1. Nevertheless, to stay conservative, we put an edge from UNKNOWN to the site of t2 because x is dereferenced in m1. Notice that, t2 and t3 are usedasparameter, because they are the this parameter of their constructor. That is why the only captured site is [m0:t1 = new RefObject].
+The second example, shown in figure 6(a), illustrates the msites property. The m2 method allocates two objects and makes one (a) point to the other (b), which escapes. Then it returns a, which is captured by m1 (side(c)=INSIDE). m1 dereferences c to get the Object and returns it, but m0 cannot capture it
+
+
+
+class RefObject { Object f;
+}
+
+class Test25 { void m0() {
+RefObject t1=new RefObject(); RefObject t2=new RefObject(); Object t3=new Object(); t1.f=t2;
+t2.f=t3; m1(t1);
+}
+static Object s; void m1(RefObject x)
+{
+
+RefObject a=(RefObject)x.f; Object b=a.f;
+s=b;
+}
+}
+mrefs graph
+
+The Test25 program
+
+analysis results
+Fig. 5. The Test25 program
+because of the edge from UNKNOWN to [m2:b = new Object].
+
+3	Empirical results
+We have implemented a prototype version of this algorithm using the Soot framework [15] v.2.2.1. Table 1 presents the results of our algorithm on the Jolden benchmarks [3]. The first two column are the size of the program in lines, and the number of allocation sites. The next three columns present the time spent by our escape analysis, in seconds, not including Soot’s phases: class loading, transformation from bytecode to Jimple (Soot’s three-address stackless code), and transformation into SSA form.
+The last three columns give the number of INSIDE variables and allocation sites, as computed by our algorithm, and the number of stackable variables, as computed by our implementation of G&S’s analysis [11]. Our analysis is more precise than [11] as it subsumes all its rules. That is, all stackable variables in the sense of [11] are INSIDE variables, but the converse is not true. In our experiments, we did not use any inlining of analyzed code. It is interesting to
+
+
+
+class Test30 { void m0() {
+Object e=m1();
+}
+Object m1() {
+RefObject c=m2(); Object d=c.f; return d;
+
+}
+static Object s; RefObject m2() {
+RefObject a=new RefObject(); Object b=new Object();
+s=b; a.f=b; return a;
+
+
+
+
+
+
+
+mrefs graph
+
+}
+}
+the Test30 program
+
+analysis results
+Fig. 6. the Test30 program
+
+Table 1 Analysis results
+
+remark that without inlining, [11] does not find any stackable variable in the programs of figures 5 and 6. As noted in [11], both analyses will benefit from method inlining.
+We did not have enough time to use the computed information to actually
+
+
+instrument the benchmarks as described in [9]. We count on doing this soon. Anyway, a preliminary implementation on another test program revealed a gain of 20% of total utilized memory, when using GC together with region- based manager, w.r.t. GC only, even if the actual region-allocated memory is about 5%.
+Besides, only a subgraph of the whole call graph has been analyzed for each test case. The subgraph contains all application methods and a subset of library methods transitively invoked by the program. This explains why there are only a few allocation sites. Nevertheless, these results are interesting, because an important fraction of analyzed allocation sites are indeed computed to be captured. Our algorithm is parameterized by the set of classes to be analyzed. This allows the user to fine-tune the analysis trading precision against performance according to specific application behaviors.
+
+Acknowledgement
+We thank Chaker Nakhli and the anonymous referees for their helpful remarks.
+
+References
+B. Blanchet. Escape Analysis for Java(TM). Theory and Practice. ACM TOPLAS, 25(6):713-775, 2003.
+G. Bollella and J. Gosling. The Real-Time Specification for Java. Addison-Wesley Longman Publishing Co., Inc., 2000.
+B. Cahoon and K. S. McKinley. Data flow analysis for software prefetching linked data structures in java controller. In PACT’01, p. 280–291, Sep. 2001.
+S. Cherem and R. Rugina. Region analysis and transformation for Java programs. In ISMM’04, ACM SIGPLAN Notices, Oct. 2004. ACM Press.
+J.-D. Choi, M. Gupta, M. Serrano, V. C. Sreedhar, and S. Midkiff.	Stack Allocation and Synchronization Optimizations for Java Using Escape Analysis. ACM TOPLAS, 25(6):876-910, 2003.
+P. Cousot and R. Cousot. Abstract interpretation and application to logic programs. Journal of Logic Programming, 13(2–3):103–179, 1992.
+R. Cytron, J. Ferrante, B. K. Rosen, M. N. Wegman, and F. K. Zadeck. Efficiently computing static single assignment form and the control dependence graph. ACM TOPLAS, 13(4):451–490, 1991.
+M. Deters and R. Cytron. Automated discovery of scoped memory regions for real-time Java. In
+ISMM’02, ACM SIGPLAN Notices, June 2002.
+D. Garbervetsky, C. Nakhli, S. Yovine, and H. Zorgati. Program instrumentation and run-time analysis of scoped memory in java, 2004. RV’04. To appear in ENTCS.
+D. Gay and A. Aiken. Language support for regions. In SIGPLAN PLDI’01, pages 70–80, 2001.
+D. Gay and B. Steensgaard. Fast escape analysis and stack allocation for object-based programs. In
+CC’00. Springer-Verlag, 2000.
+R. Henriksson. Scheduling garbage collection in embedded systems. PhD. Thesis, Lund Institute of Technology, July 1998.
+T. Higuera, V. Issarny, M. Banatre, G. Cabillic, J-Ph. Lesot, and F. Parain. Memory management for real-time Java: an efficient solution using hardware support. Real-Time Systems Journal, 2002.
+
+
+R. Jones and R. Lins. Garbage collection. Algorithms for automatic dynamic memory management. John Wiley and Sons, 1996.
+V. Sundaresan, P. Lam, E. Gagnon, R. Vallee-Rai, L. Hendren and P. Co. Soot - A java optimization framework. In Proceedings of CASCON 1999, pages 125–135, 1999.
+T. Ritzau and P. Fritzon. Decreasing memory over-head in hard real-time garbage collection. In
+EMSOFT’02, Grenoble, France. LNCS 2491, 2002.
+F. Siebert. Eliminating external fragmentation in a non-moving garbage collector for Java. CASES’00, 2000.
+M. Tofte and J-P. Talpin. Region-based memory management. Information and Computation, 1997.
+J. Whaley and M. Rinard.  Compositional pointer and escape analysis for Java programs.  in
+OOPSLA’99, volume 34(10) of ACM SIGPLAN Notices. ACM Press.

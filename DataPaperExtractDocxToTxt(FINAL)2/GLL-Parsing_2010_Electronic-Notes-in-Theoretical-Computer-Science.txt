@@ -1,0 +1,334 @@
+
+
+Electronic Notes in Theoretical Computer Science 253 (2010) 177–189
+www.elsevier.com/locate/entcs
+GLL Parsing
+Elizabeth Scott and Adrian Johnstone1
+Department of Computer Science Royal Holloway, University of London Egham, Surrey, United Kingdom
+
+
+Abstract
+Recursive Descent (RD) parsers are popular because their control flow follows the structure of the grammar and hence they are easy to write and to debug. However, the class of grammars which admit RD parsers is very limited. Backtracking techniques may be used to extend this class, but can have explosive run- times and cannot deal with grammars with left recursion. Tomita-style RNGLR parsers are fully general but are based on LR techniques and do not have the direct relationship with the grammar that an RD parser has. We develop the fully general GLL parsing technique which is recursive descent-like, and has the property that the parse follows closely the structure of the grammar rules, but uses RNGLR-like machinery to handle non-determinism. The resulting recognisers run in worst-case cubic time and can be built even for left recursive grammars.
+Keywords: generalised parsing, recursive descent, RNGLR and RIGLR parsing, context free languages
+
+Parser users tend to separate themselves into bottom-up and top-down tribes. Top-down users value the readability of recursive descent (RD) implementations of LL parsing along with the ease of semantic action incorporation. Bottom-up users value the extended parsing power of LR parsers, in particular the admissibility of left recursive grammars, although LR parsers cannot cope with hidden left recur- sion and even LR(0) parse tables can be exponential in the size of the grammar, while an LL parser is linear in the size of the grammar. Both tribes suffer from the need to coerce their grammars into forms which are deterministic, or at least near-deterministic for their chosen parsing technology. There are many examples of parser generators which extend deterministic algorithms with backtracking and lookahead[10,11,1,18,7,5], although such extensions can trap the unwary. A more formal approach to backtracking is represented by Aho and Ullman’s TDPL lan- guage (recently repopularised as Parsing Expression Grammars and their associated memoized Packrat parsers). These techniques are superficially attractive because, by definition, there is at most one derivation for each string in the language of a
+
+1 Email:e.scott@rhul.ac.uk, a.johnstone@rhul.ac.uk
+
+1571-0661 © 2010 Elsevier B.V. Open access under CC BY-NC-ND license.
+doi:10.1016/j.entcs.2010.08.041
+
+PEG, but, of course, PEG’s are not context-free grammars, and as Aho and Ullman said [3, p466]
+“... it can be quite difficult to determine what language is defined by a TDPL program.”
+The current interest in PEG’s is another manifestation of users’ need for parsers which are human readable.
+The Natural Language Processing (NLP) community has always had to cope with the full expressive power of context free grammars. A variety of approaches have been developed and remain popular including CYK [19], Earley [6] and Tomita style GLR parsers [15,9,13]. Although GLR parsing has not been universally adopted by the NLP community — perhaps because of its complexity compared to the easier to visualise CYK and Earley methods — GLR has the attractive property for com- puter science applications that it achieves linear performance on LR-deterministic grammars whilst gracefully coping with fully general grammars. Since most com- puting applications involve near-deterministic grammars, GLR has seen signifi- cant takeup for language re-engineering applications. It is used, for example, in ASF+SDF [16] and Stratego [17], and even Bison has a partial GLR mode [2]. We have developed [14] cubic worst-case GLR algorithms which smoothly improve their performance to linear time algorithms when processing LR grammars, but this does not address the desiderata of the top down cohort. Nobody could accuse a GLR implementation of a parser for, say, C++, of being easy to read, and by extension easy to debug.
+This paper introduces a new algorithm, Generalised LL (GLL) parsing, which handles all (including left recursive) context free grammars; runs in worst case cubic time; runs in linear time on LL grammars and which also allows grammar rule factorisation, with consequential speed up. Most importantly, the construction is so straightforward that implementation by hand is feasible: indeed we report on the performance of a hand constructed GLL parser for ANSI C. The resulting code has the RD-property that it is essentially in one-to-one correspondence with the grammar, so parsers may be debugged by stepping through the generated code with a conventional debugger. We believe that GLL will become the generalised parsing algorithm of choice.
+The insight behind GLL comes in part from our work on Aycock and Horspool style RIGLR parsers [12]. Aycock and Horspool [4] developed an approach designed to reduce the amount of stack activity in a GLR parser. Their algorithm does not admit grammars with hidden left recursion, but we have given a modified version, the RIGLR algorithm, which is general. In their original paper, Aycock and Hor- spool described their automata based algorithm as a faster GLR parser but it is our view that the algorithm is in closer in principle to a generalised LL parser. The RIGLR automata are derived from the grammar rules by ‘terminalising’ cer- tain instances of nonterminals in a way that removes embedded recursion. When an RIGLR traverser encounters a terminalised nonterminal, it is required to make a call to another automaton. Normally, we seek to minimise call stack activity by finding a small set of terminalisations which are complete, in the sense of eliminating all embedded recursion. However, in [12] we noted that
+
+
+if we ‘terminalise’ all but the topmost instance of each nonterminal, we get a parser whose stack activity mimics that of a recursive descent parser, except that left recursion is allowable!
+It is this observation that lead us to apply the techniques that we developed for RNGLR and RIGLR parsing to give a general recursive descent-style algorithm. In fact we can organise the algorithm so that the parsing schedule either mimics a depth first backtracking recursive descent parser (except that recursive calls are terminated early) or so that all putative parses are synchronised with respect to reading the input. The latter synchronisation is more GLR like and causes the call stacks to be constructed in levels, and that allows a memory efficient approach to the construction of both the stacks and the associated parse trees in a full parser implementation. In this paper we focus on the former organisation.
+
+The general approach
+A context free grammar (CFG) consists of a set N of non-terminal symbols, a set T of terminal symbols, an element S ∈ N called the start symbol, and a set of grammar rules of the form A ::= α where A ∈ N and α is a string in (T ∪ N)∗. The symbol ϵ denotes the empty string. We often compose rules with the same left hand sides into a single rule using the alternation symbol, A ::= α1 | ... | αt. We refer to the strings αj as the alternates of A.
+A derivation step is an expansion γAβ⇒γαβ where γ, β ∈ (T ∪ N)∗ and A ::= α is a grammar rule. A derivation of τ from σ is a sequence σ⇒β1⇒β2⇒ ... ⇒βn−1⇒τ , also written σ⇒∗ τ or, if n > 0, σ⇒+ τ .
+A non-terminal A is left recursive if there is a string μ such that A⇒+ Aμ.
+A recursive descent parser consists of a collection of parse functions, pA(), one for each non-terminal A in the grammar. The function selects an alternate, α, of the rule for A, according to the current symbol in the input string being parsed, and then calls the parse functions associated with the symbols in α. It is possible that the current input symbol will not uniquely determine the alternate to be chosen, and if A is left recursive the parse function can go into an infinite loop.
+GLR parsers extend LR parsers to deal with non-determinism by spawning par- allel processes, each with their own stack. This approach is made practical by combining the stacks into a Tomita-style graph structured stack (GSS) which re- combines stacks when their associated processes converge. Direct left recursion is not a problem for LR parsers, but hidden left recursion (A⇒∗ βAμ where β⇒+ ϵ) can result in non-termination.
+We have used a modified type of GSS to give a Tomita-style RNGLR algo- rithm [13] and an Aycock and Horspool-style RIGLR algorithm [12], both of which result in parsers that can be applied to all context free grammars, including those with hidden left recursion. In the RD-based GLL algorithm, introduced in this paper, we shall use RIGLR-style ‘descriptors’ (see next section) to represent the multiple process configurations which result from non-determinism, and a modified GSS to explicitly manage the parse function call stacks in a way that copes with left recursion.
+
+Call stacks and elementary descriptors
+We begin by describing the basic approach using the grammar Γ0
+S	::=	A S d | B S | ϵ
+::=	a | c
+::=	a | b
+
+(Note that this approach will need modification to become general, as we shall discuss in Section 3.)
+A traditional recursive descent parser for Γ0 is composed of parse functions pS(), pA(), pB() and a main function. The parse function contains code corresponding to each alternate, α, and these code sections are guarded by a test which checks whether the current input symbol belongs to first(α), or follow(α) if α⇒∗ ϵ, see Section 4.1. We suppose that the input is held in a global array I of length m + 1, and that I[m] = $, the end-of-string symbol.
+main() { i := 0
+if (I[i] ∈ {a, b, c, d, $}) pS() else error()
+if I[i] = $	report success else error() }
+
+pS() { if (I[i] ∈ {a, c}) { pA(); pS(); if (I[i]= d) { i := i +1 } else error() }
+else { if (I[i] ∈ {a, b}) { pB(); pS() } } 
+
+pA() { if (I[i]= a) { i := i +1 }
+else if (I[i]= c) { i := i +1 } else error() }
+
+pB() { if (I[i]= a) { i := i +1 }
+else if (I[i]= b) { i := i +1 } else error() }
+(Here error() is a function that terminates the algorithm and reports failure.)
+Of course, Γ0 is not LL(1) so this algorithm will not behave correctly without some additional mechanism for dealing with non-determinism. We address this by converting the function calls into explicit call stack operations using stack push and goto statements in the usual way. We also partition the body of those functions whose corresponding nonterminal is not LL(1) and separately label each partition. In practice, then, some goto statements will have several target labels, corresponding to these multiple partitions: for example, this will be the case for the nonterminal S in Γ0. We use descriptors to record each possible choice, and replace termination in the RD algorithm with execution re-start from the point recorded in the next descriptor. Instead of calls to the error function, the algorithm simply processes the next descriptor and it terminates when there are no further descriptors to be processed.
+In detail, an elementary descriptor is a triple (L, s, j) where L is a line label, s is a stack and j is a position in the input array I. We maintain a set R of current descriptors. At the end of a parse function and at points of non-determinism in
+
+the grammar we create a new descriptor using the label at the top of the current stack. When a particular execution of the algorithm stops, at input I[i] say, the top element L is popped from the stack s = [s∗, L] and (L, s∗, i) is added to R (if it has not already been added). We use POP (s, i, R) to denote this action. Then the next descriptor (L∗, t, j) is removed from R and execution starts at line L∗ with call stack t and input symbol I[j]. The overall execution terminates when the set R is empty. In order to allow us, later, to combine the stacks we record both the line label L and the current input buffer index k on the stack using the notation Lk. At this interim stage we treat the stack as a bracketed list, [ ] denotes the empty stack, and we assume that we have a function PUSH(s, Lk) which simply updates the stack s by pushing on the element Lk. In the final version of the algorithm this will be replaced by a function create() which builds the GSS.
+i := 0; R := ∅; s := [L0]
+LS: if (I[i] ∈ {a, c}) add (LS1 , s, i) to R
+if (I[i] ∈ {a, b}) add (LS2 , s, i) to R
+if (I[i] ∈ {d, $}) add (LS3 , s, i) to R
+L0: if (R /= ∅) { remove (L, s1, j) from R
+if (L = L0 and s1 = [ ] and j = |I|) report success
+else { s := s1; i := j; goto L }
+else report failure
+LS : PUSH(s, Li ); goto LA
+1	1
+L1:  PUSH(s, Li ); goto LS
+L2:	if (I[i]= d) { i := i + 1; POP (s, i, R) }; goto L0 LS : PUSH(s, Li ); goto LB
+2	3
+L3:  PUSH(s, Li ); goto LS
+L4: POP (s, i, R); goto L0 LS3 : POP (s, i, R); goto L0
+LA:	if (I[i]= a) { i := i + 1; POP (s, i, R); goto L0 }
+else{ if (I[i]= c) { i := i + 1; POP (s, i, R) }
+goto L0 }
+LB:	if (I[i]= a) { i := i + 1; POP (s, i, R); goto L0 }
+else{ if (I[i]= b) { i := i + 1; POP (s, i, R) }
+goto L0 }
+As an example we execute the above algorithm with input aad$. We begin by adding (LS , [L0], 0) and then (LS , [L0], 0) to R and then go to line L0. We remove
+1	0	2	0
+(LS , [L0], 0) from R and go to line LS . The push action sets s to [L0, L0] and we
+1	0	1	0	1
+go to LA. The pop action adds (L1, [L0], 1) to R and then we go back to L0. In the
+same way, processing (Ls , [L0], 0) from R eventually results in (L3, [L0], 1) being
+2	0	0
+added to R.
+R = {(L1, [L0], 1), (L3, [L0], 1)}
+0	0
+Next (L1, [L0], 1) is processed. At L1 the push action sets s to [L0, L1] and then
+0	0	2
+at LS we add (LS , [L0, L1], 1) and (LS , [L0, L1], 1) to R.  Similarly, processing
+1	0	2	2	0	2
+
+(L3, [L0], 1) gives
+R = {(LS , [L0, L1], 1), (LS , [L0, L1], 1), (LS , [L0, L1], 1), (LS , [L0, L1], 1)}
+
+1	0	2
+2	0	2
+1	0	4
+2	0	4
+
+Processing each of these elements in turn results in
+R = {(L1, [L0, L1], 2), (L3, [L0, L1], 2), (L1, [L0, L1], 2), (L3, [L0, L1], 2)}
+0	2	0	2	0	4	0	4
+Then, as I[2] = d, processing each of these results in
+R = {(LS , [L0, L1, L2], 2), (LS , [L0, L1, L2], 2), (LS , [L0, L1, L2], 2), (LS , [L0, L1, L2], 2)}
+
+3	0	2	2
+3	0	2	4
+3	0	4	2
+3	0	4	4
+
+From this set we get
+R = {(L2, [L0, L1], 2), (L4, [L0, L1], 2), (L2, [L0, L1], 2), (L4, [L0, L1], 2)}
+0	2	0	2	0	4	0	4
+Processing these elements gives
+R = {(L2, [L0], 3), (L2, [L0], 2), (L4, [L0], 3), (L4, [L0], 2)}
+0	0	0	0
+Since I[3] = $, processing these results in (L0, [ ], 3) and (L0, [ ], 2) being added to
+R and finally algorithm terminates and correctly reports success.
+The GSS and the sets Ui and P
+The problem with the approach as it is described above is that for some grammars the number of descriptors created can be exponential in the size of input and the process does not work correctly for grammars with left recursion. We deal with these issues by combining the stacks into a single, global graph structure, a GSS, recording only the corresponding stack top node in the descriptor, and using loops in the GSS when left recursion is encountered. The GSS will be built by the GLL algorithm as illustrated in the modified Γ0-recogniser described below. The GSS combining all the stacks constructed in the example for Γ0 previous section is
+0 (	1 (	2  u
+
+‘ L0 z Jz
+ L2 z Jz
+   L2 J
+
+,ˆ, zz
+´’ z z
+
+
+L0
+ 1 J
+L0
+ 3 J
+z L1  (
+‘ 4 J
+L1
+ 1 J
+L1
+ 3 J
+z,2 ,w
+ L4 J
+
+A descriptor is a triple (L, u, i) where L is a label, u is a GSS node and i
+is an integer. For example, the four elementary descriptors {(LS , [L0, L1, L2], 2),
+3	0	2	2
+(LS , [L0, L1, L2], 2), (LS , [L0, L1, L2], 2), (LS , [L0, L1, L2], 2)} in the above exam-
+
+3	0	2	4
+3	0	4	2
+3	0	4	4
+
+ple are replaced by two descriptors {(LS3 , u, 2), (LS3 , w, 2)}. As a result of this
+definition actions POP (s, i, R) are replaced by actions which add (L, v, i) to R for all children v of node corresponding to the top of s.
+
+In order to avoid creating the same descriptor twice we maintain sets Ui =
+{(L, u) | (L, u, i) has been added to R}. A problem arises in the case when an additional child, w, is added to u after a pop statement has been executed because the pop action needs to be applied to this child. To address this we use a set P which contains pairs (u, k) for which a ‘pop’ line has been executed. When a new child node w is added to u, for all (u, k) ∈ P if (Lu, w) /∈ Uk then (Lu, u, k) is added to R, where Lu is the label of u.
+These techniques are implemented via functions add(), create() and pop() that are formally defined in Section 4. Informally, add(L, u, j) checks if there is a de- scriptor (L, u) in Uj and if not it adds it to Uj and R. The function create(L, u, j) creates a GSS node v = Lj with child u if one does not already exist, and then returns v. If (v, k) ∈ P then add(L, u, k) is called. The function pop(u, j) calls add(Lu, v, j) for all children v of u, and adds (u, j) to P.
+We can rewrite the algorithm from Section 2 as follows. The variable cu holds the current GSS node, i holds the current input index and m = |I| + 1.
+create GSS nodes u1 := L0, u0 := $ and an edge (u0, u1)
+i := 0; R := ∅; cu := u1
+for 0 ≤ j ≤ m { Uj = ∅ } 
+LS: if (I[i] ∈ {a, c}) add(LS1 , cu, i)
+if (I[i] ∈ {a, b}) add(LS2 , cu, i)
+if (I[i] ∈ {d, $}) add(LS3 , cu, i)
+L0: if (R /= ∅) { remove (L, u, j) from R
+cu := u; i := j; goto L }
+else if ((L0, u0, m) ∈ Um) report success else report failure
+
+LS1 : cu := create(L1, cu, i); goto LA L1: cu := create(L2, cu, i); goto LS
+L2:	if(I[i]= d){ i := i + 1; pop(cu, i) };	goto L0 LS2 : cu := create(L3, cu, i); goto LB
+L3: cu := create(L4, cu, i); goto LS
+L4: pop(cu, i); goto L0 LS3 : pop(cu, i); goto L0
+LA:	if (I[i]= a) { i := i + 1; pop(cu, i); goto L0 }
+else{ if(I[i]= c){ i := i + 1; pop(cu, i) }; goto L0 }
+LB:	if (I[i]= a) { i := i + 1; pop(cu, i); goto L0 }
+else{ if(I[i]= b){ i := i + 1; pop(cu, i) }; goto L0 }
+Note It is not obvious how to implement the algorithm as written because few programming languages include an unrestricted goto statement that can take a non-statically visible value, which is what is implied in the if statement at label L0 in the above algorithm. We discuss this in Section 5.
+
+Formal definition of the GLL approach
+Initial machinery
+We say A is nullable if A⇒∗ ϵ. We define firstT(A) = {t ∈ T|∃α(A⇒∗ tα)} and followT(A) = {t ∈ T | ∃α, β(S⇒∗ αAtβ)}. If A is nullable we define first(A) = firstT(A) ∪ {ϵ} and follow(A) = followT(A) ∪ {$}. Otherwise we define first(A) = firstT(A) and follow(A) = followT(A). We say that a non- terminal A is LL(1) if (i) A ::= α, A ::= β imply first(α) ∩ first(β)= ∅, and (ii) if A⇒∗ ϵ then first(A) ∩ follow(A)= ∅.
+We use Lu to denote the line label corresponding to a GSS node u.
+A GLL recogniser includes labelled lines of three types: return, nonterminal and alternate. Return labels, RXi , are used to label the main loop of the algorithm and what would be parse function call return lines in a recursive descent parser. Nonterminal labels, LX , are used to label the first line of what would be the code for the parse function for X in a recursive descent parser. Alternate labels, LXi , are used to label the first line of what would be the code corresponding to the ith-alternate, αi say, of X.
+The algorithm also employs three functions add(), create() and pop() which build the GSS and create and store processes for subsequent execution, and a function test() which checks the current input symbol against the current nonterminal and alternate. These functions are defined as follows.
+test(x, A, α) {
+if (x ∈ first(α)) or (ϵ ∈ first(α) and x ∈ follow(A)) { return true }
+else { return false } } 
+
+add(L, u, j) { if ((L, u) /∈ Uj { add (L, u) to Uj, add (L, u, j) to R } } 
+
+pop(u, j) { if (u /= u0) { add (u, j) to P
+for each child v of u { add(Lu, v, j) } } } 
+
+create(L, u, j) { if there is not already a GSS node labelled Lj create one let v be the GSS node labelled Lj
+if there is not an edge from v to u {
+create an edge from v to u
+for all ((v, k) ∈ P) { add(L, u, k) } } 
+return v }
+
+Dealing with alternates
+We begin by defining the part of the algorithm which is generated for an alternate α of a grammar rule for A. We name the corresponding lines of the algorithm code(A ::= α).
+
+Each nonterminal instance on the right hand sides of the grammar rules is given an instance number. We write Ak to indicate the kth instance of nonterminal A. Each alternate of the grammar rule for a nonterminal is also given an instance number. We write A ::= αk to indicate the kth alternate of the grammar rule for A.
+For a terminal a we define
+
+code(aα, j, X) = if (I[j]= a) { j := j +1 } else { goto L0 }
+
+
+For a nonterminal instance Ak we define
+
+code(Akα, j, X)	=	if (test(I[j], X, Akα) {
+cu := create(RAk , cu, j), goto LA }
+else { goto L0 }
+RAk :
+
+For each production A ::= αk we define code(A ::= αk, j) as follows. Let αk = x1x2 ... xf , where each xp,1 ≤ p ≤ f , is either a terminal or a nonterminal instance of the form Xl.
+If f =0 then αk = ϵ and
+
+code(A ::= ϵ, j) =	pop(cu, j),  goto L0
+
+If x1 is a terminal then
+
+code(A ::= αk, j)	=	j := j +1 
+code(x2 ... xf , j, A)
+code(x3 ... xf , j, A)
+... 
+code(xf , j, A) pop(cu, j), goto L0
+
+If x1 is a nonterminal instance Xl then
+
+code(A ::= αk, j)	=	cu := create(RXl , cu, j), goto LX
+RXl : code(x2 ... xf , j, A)
+code(x3 ... xf , j, A)
+... 
+code(xf , j, A) pop(cu, j), goto L0
+
+Dealing with rules
+Consider the grammar rule A ::= α1 | ... | αt. We define code(A, j) as follows. If
+A is an LL(1) nonterminal then
+code(A, j)	=	if (test(I[j], A, α1)) { goto LA1 }
+... 
+else if (test(I[j], A, αt)) { goto LAt }
+LA1 : code(A ::= α1, j)
+... 
+LAt : code(A ::= αt, j)
+If A is not an LL(1) nonterminal then
+code(A, j)	=	if (test(I[j], A, α1)) { add(LA1 , cu, j) }
+... 
+if (test(I[j], A, αt)) { add(LAt , cu, j) }
+goto L0
+LA1 : code(A ::= α1, j)
+... 
+LAt : code(A ::= αt, j)
+Building a GLL recogniser for a general CFG
+We suppose that the nonterminals of the grammar Γ are A,...,X. Then the GLL recognition algorithm for Γ is given by:
+m is a constant integer whose value is the length of the input
+I is a constant integer array of size m +1 
+i is an integer variable
+GSS is a digraph whose nodes are labelled with elements of the form Lj cu is a GSS node variable
+P is a set of GSS node and integer pairs
+R is a set of descriptors
+read the input into I and set I[m] := $, i := 0
+create GSS nodes u1 = L0, u0 =$ and an edge (u0, u1)
+cu := u1, i := 0
+for 0 ≤ j ≤ m { Uj := ∅}
+R := ∅, P := ∅
+if(I[0] ∈ first(S$)) {  goto LS }  else { report failure }
+L0: if R /= ∅ { 
+remove a descriptor, (L, u, j) say, from R
+cu := u, i := j, goto L }
+else if ((L0, u0, m) ∈ Um) { report success } else { report failure }
+
+
+LA: code(A, i)
+... 
+LX : code(X, i)
+Implementation and experimental results
+As we mentioned above, to implement a GLL algorithm in a standard programming language the goto statement in the main for loop can be replaced with a Hoare style case statement. We associate a unique integer, N RXj or NLXj , with each label and use that integer in the descriptors (so L becomes an integer variable). Of course, we could also substitute the appropriate lines of the algorithm in the case statements if we wished, removing the goto statements completely with the use of break statements.
+Elements are only added to R once so the set R can be implemented efficiently as a stack or as a queue. As written in the algorithm R is a set so there is no specified order in which its elements are processed. If, as we have done, R is implemented as a stack then the effect will be a depth-first parse trace, modulo the fact that left recursive calls are terminated at the start of the second iteration. Thus the flow of the algorithm will be essentially that of a recursive descent parser.
+On the other hand, R could be implemented as a set of subsets Rj which contain the elements of the form (L, u, j). In this case, if the elements of Rj are processed before any of those in Rj+1,0 ≤ j < m, then the sets Uj and the GSS nodes will be constructed in corresponding order, with no elements of Uj created once Rj = ∅. This can allow Uj to be deleted once Rj = ∅.
+To demonstrate practicality we have written GLL-recognisers for grammars for C
+and Pascal, for the grammar, Γ1,
+S	::=	C a | d
+B	::=	ϵ | a
+C	::=	b | B C b | b b 
+which contains hidden left recursion, and for the grammar, Γ2,
+S ::= b | S S | S S S 
+on which standard GLR parsers are O(n4). The GLL-recognisers for C, Γ1 and Γ2 were written by hand, demonstrating the relative simplicity of GLL implementation. For C, the GTB tool [8] was used to generate the first sets and implementation was made easier by the fact that the grammar is ϵ-free. For Pascal, the recogniser was generated by the newly created GLL-parser generator algorithm that has been added to GTB.
+Of the common generalised parsers, the GLL algorithm most closely resembles the Aycock and Horspool style RIGLR algorithm, mentioned above, in which a set of automata which correspond to grammar non-terminals call each other via a
+
+
+Table 1
+common stack. The RIGLR algorithm can be tuned by selecting which non-terminal instances in the grammar generate an automaton call, trading execution time for automaton space. In the most space efficient version, which we call SRIGLR, all non- terminal instances generate a call. We have used GTB to build SRIGLR recognisers which we have compared to the corresponding GLL recognisers.
+The input strings for C are a Quine-McCluskey Boolean minimiser (4,291 tokens) and the source code for GTB itself (36,827 tokens). The input string for Pascal is a program that performs elementary tree construction and visualisation (4,425 tokens). The input has already been tokenised so no lexical analysis needed to be performed. The results are shown in Table 1.
+We can see that, as well as being easy to write, GLL recognisers perform well. The slower times for Γ2 arise because the SRIGLR algorithm factors the grammar as it builds the automaton. The results for Γ∗
+S ::= b | S S A	A ::= S | ϵ
+in which the grammar is factored, demonstrate the difference. A GLL recogniser for the equivalent EBNF grammar S ::= b | S S (S |ϵ) runs in 4.20 CPU seconds on b300, indicating that GLL recogniser performances can be made even better by simple grammar factorisation. This advantage is also displayed by the Pascal data; the Pacsal BNF grammar used was obtained from the EBNF original and hence is also simply factored. In general, such factorisation can be done automatically and will not change the user’s view of the algorithm flow.
+Conclusions and Final Remarks
+We have shown that GLL recognisers are relatively easy to construct and are also practical. They have the desirable property of recursive descent parsers in that the parser structure matches the grammar structure. It is also possible to extend the GLL algorithm to EBNF grammars, allowing factorisation, and the use of iteration in place of recursion, to make the resulting parsers even more efficient.
+
+The version of the GLL algorithm discussed here is only a recogniser: it does not produce any form of derivation. However, all the derivation paths are explored by the algorithm and it is relatively easy to modify the algorithm to produce Tomita- style SPPF representations of all the derivations of an input string. The modification is essentially the same as that made to turn an RIGLR recogniser into a parser, as described in [12].
+
+References
+JAVACC home page. http://javacc.dev.java.net, 2000.
+Gnu Bison home page. http://www.gnu.org/software/bison, 2003.
+Alfred V. Aho and Jeffrey D. Ullman. The Theory of Parsing, Translation and Compiling, volume 1
+— Parsing of Series in Automatic Computation. Prentice-Hall, 1972.
+John Aycock and Nigel Horspool. Faster generalised LR parsing. In Compiler Construction, 8th Intnl. Conf, CC’99, volume 1575 of Lecture Notes in Computer Science, pages 32 – 46. Springer-Verlag, 1999.
+Peter T. Breuer and Jonathan P. Bowen. A PREttier Compiler-Compiler: Generating higher-order parsers in C. Software Practice and Experience, 25(11):1263–1297, November 1995.
+J Earley. An efficient context-free parsing algorithm. Communications of the ACM, 13(2):94–102, February 1970.
+Adrian Johnstone and Elizabeth Scott. Generalised recursive descent parsing and follow determinism. In Kai Koskimies, editor, Proc. 7th Intnl. Conf. Compiler Construction (CC’98), Lecture Notes in Computer Science 1383, pages 16–30, Berlin, 1998. Springer.
+Adrian Johnstone and Elizabeth Scott. Proofs and pedagogy; science and systems: the Grammar Tool Box. Science of Computer Programming, 2007.
+Rahman Nozohoor-Farshi. GLR parsing for є-grammars. In Masaru Tomita, editor, Generalized LR Parsing, pages 60–75. Kluwer Academic Publishers, The Netherlands, 1991.
+Terence Parr. ANTLR home page. http://www.antlr.org, Last visited: Dec 2004.
+Terence John Parr. Language translation using PCCTS and C++. Automata Publishing Company, 1996.
+Elizabeth Scott and Adrian Johnstone. Generalised bottom up parsers with reduced stack activity.
+The Computer Journal, 48(5):565–587, 2005.
+Elizabeth Scott and Adrian Johnstone. Right nulled GLR parsers. ACM Transactions on Programming Languages and Systems, 28(4):577–618, July 2006.
+Elizabeth Scott, Adrian Johnstone, and Giorgios Economopoulos. A cubic Tomita style GLR parsing algorithm. Acta Informatica, 44:427–461, 2007.
+Masaru Tomita. Efficient parsing for natural language. Kluwer Academic Publishers, Boston, 1986.
+M.G.J. van den Brand, J. Heering, P. Klint, and P.A. Olivier. Compiling language definitions: the ASF+SDF compiler. ACM Transactions on Programming Languages and Systems, 24(4):334–368, 2002.
+Eelco Visser. Program transformation with Stratego/XT: rules, strategies, tools, and systems in StrategoXT-0.9. In C.Lengauer et. al, editor, Domain-Specific Program Generation, volume 3016 of Lecture Notes in Computer Science, pages 216–238. Springer-Verlag, Berlin, June 2004.
+Albrecht W¨oß, Markus L¨oberbauer, and Hanspeter Mo¨ssenb¨ock. Ll(1) conflict resolution in a recursive descent compiler generator. In G.Goos, J. Hartmanis, and J. van Leeuwen, editors, Modular languages (Joint Modular Languages Conference 2003), volume 2789 of Lecture Notes in Computer Science, pages 192–201. Springer–Verlag, 2003.
+D H Younger. Recognition of context-free languages in time n3. Inform. Control, 10(2):189–208, February 1967.

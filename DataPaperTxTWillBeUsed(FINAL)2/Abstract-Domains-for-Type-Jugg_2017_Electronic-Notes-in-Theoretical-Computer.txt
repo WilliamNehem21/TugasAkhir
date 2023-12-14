@@ -1,0 +1,515 @@
+Available online at www.sciencedirect.com
+
+
+Electronic Notes in Theoretical Computer Science 331 (2017) 41–55
+www.elsevier.com/locate/entcs
+Abstract Domains for Type Juggling
+Vincenzo Arceri1
+Department of Computer Science, University of Verona, Italy
+Sergio Maffeis2
+Department of Computing, Imperial College London, UK
+
+Abstract
+Web scripting languages, such as PHP and JavaScript, provide a wide range of dynamic features that make them both flexible and error-prone. In order to prevent bugs in web applications, there is a sore need for powerful static analysis tools. In this paper, we investigate how Abstract Interpretation may be leveraged to provide a precise value analysis providing rich typing information that can be a useful component for such tools.
+In particular, we define the formal semantics for a core of PHP that illustrates type juggling, the implicit type conversions typical of PHP, and investigate the design of abstract domains and operations that, while still scalable, are expressive enough to cope with type juggling. We believe that our approach can also be applied to other languages with implicit type conversions.
+Keywords: PHP, Static analysis, Abstract interpretation, Type conversions
+Introduction
+The success of web scripting languages such as PHP and JavaScript is also due to their wide range of dynamic features, which make them very flexible but un- fortunately also error-prone. A key such feature is that language operations allow operands of any type, applying implicit type conversions when a specific type is needed. PHP, our example language, calls this feature type juggling.
+In this paper, we investigate how the Abstract Interpretation approach to pro- gram analysis [3, 4] may be leveraged to provide a precise value analysis in presence of type juggling. Since PHP is dynamically typed, meaning that the same variable can store values of different types at different points in the execution, our analysis does not aim to enforce type invariance, but instead aims to determine the most precise type for each variable in the final state.
+Filaretti and Maffeis [6] define a formal operational semantics for most of the PHP language that is faithful to its mainstream Zend reference implementation [1]. In Section 2, we propose μPHP (micro-PHP), a much smaller core of the language that is still large enough to illustrate the main challenges related to type juggling. In fact, μPHP is valid PHP, and behaves exactly like the full language 3 , although the omission of certain language features from our formalisation (see Section 5) allows
+
+1 Email: vincenzo.arceri@studenti.univr.it
+2 Email: sergio.maffeis@imperial.ac.uk
+3 All the examples in the paper are both derivable via our semantics and executable in PHP 5.4.
+http://dx.doi.org/10.1016/j.entcs.2017.02.003
+1571-0661/© 2017 The Author(s). Published by Elsevier B.V.
+This is an open access article under the CC BY-NC-ND license (http://creativecommons.org/licenses/by-nc-nd/4.0/).
+
+us to define a more straightforward semantics than the one in [6]. We present μPHP in big-step semantics style, as we are interested in properties of the final state. 4 We show many examples that will reveal surprising behaviour of PHP to the non-expert. In Section 3, we define an abstract semantics parametric on the domain, which defines a corresponding flow- and path-sensitive value analysis. We discuss assump- tions on such domain under which we can argue that the analysis is sound with respect to the concrete semantics of μPHP. The design of our semantics makes it straightforward to implement an abstract interpreter to calculate the analysis result. In Section 4, we define abstract domains and operations that capture the sub- tleties of type juggling. Rather than giving the definitions upfront, we expound the rationale behind our design, stressing expressivity, modularity and hopefully high- lighting subtle points that can be useful to design domains for other languages with similar features. Some practical static analyses of realistic languages with dynamic type conversions, such as [9, 11], add to each type lattice extra points that represent information which can improve the precision of the analysis. Other analyses, such as [8], use powersets of values, limiting the set sizes by a parameter k in order to avoid infinite computations. That leads to very expressive domains when up-to-k
+values are analysed, that drastically loose precision for further values.
+In contrast, we advocate an expressive and systematic approach that refines each type domain to include just the information necessary to obtain precise abstract operations and type juggling functions. Our analysis may not be highly efficient but is scalable, having polynomial complexity: we emphasise precision over performance. As argued in [4], in theory one should aim for the best correct approximation of a concrete operator f defined as f  “ α ˝ f ˝ γ, but f  is sometimes not computable, or practical. In defining the abstract operations of our type juggling domain we follow the spirit of this equation, striving to exploit at most the concrete information available, and delay as much as possible the loss of information caused by merging values with the \ operator.
+Related Work. Since the seminal work of [2], abstract interpretation has been used to define many value and type analyses, but we are not aware of any analysis designed to handle in particular the implicit type conversions for scripting languages. On the practical side, several static analysers for JavaScript and PHP are directly based, or at least inspired, by abstract interpretation [5, 8–12]. All aim to analyse real-world PHP programs, and focus most effort on prominent issues such as the analysis of associative arrays and functions, while paying less attention to implicit type conversions. As far as we can tell (sometimes essential details are missing from the cited references), none of the analyses in [5, 9–12] comes close to our level of precision, except for [8] which, as discussed above, uses expensive powerset domains. Nevertheless, we hope that our investigation may contribute to improve the precision of these analysers for programs that make intensive use of implicit type conversions. Moreover, none of the cited works above provides formal proofs of soundness, and some such as [10, 12] openly admit to be unsound.
+
+4 It would be easy, but notationally more cumbersome, to define an equivalent small-step semantics better able to represent trace properties.
+
+Summarising, our main claim of novelty is to apply a systematic approach grounded in the theory of Abstract Interpretation to analyse, in a provably sound way, non-trivial features of (the core of) a practical programming language.
+
+Type Juggling in μPHP
+We now define syntax and semantics of μPHP, a subset of PHP able to express most type juggling behaviour. Our examples can be verified in a PHP 5.x interpreter.
+
+Syntax
+To appreciate some subtle points of type juggling, we need to be somewhat precise about the representation of literals. Let Char be the finite set of characters used
+in PHP, and Dig Ĺ Char the set of digits 0,...,9. The literals of μPHP are
+partitioned in the sets
+Null: the constant NULL, which is the default value of undefined variables.
+Bool: the boolean constants true and false.
+Str “ Charx: strings such as "hi!","","bye!".
+Int “ ´?Dig`: signed integers such as -5,0,1,00042.
+Float “ ´?Digx.Digx: decimal notation numbers, 5 such as -1.3,0.,4.200.
+The capitalisation of NULL, true, and false above is irrelevant. An empty sequence of digits between the optional sign and the decimal point of a float is interpreted as 0, so for example -.3 is an alternative representation for -0.3, and the degenerate case “.” is not a valid Float. The syntax of μPHP is reported below:
+
+
+Exp ::= Lit
+|	Var
+Stmt ::= Var = Exp ;
+|	if (Exp) Block else Block
+|	while (Exp) Block
+
+|
+Exp
+|	Stmt Stmt
+
+|	Exp
+Exp	|	;
+
+where Id
+is a subset of
+Str
+suitable to define identifiers.	We denote
+
+prefix unary operators by	P	t!,-,+u and infix binary operators by
+P t+,-,*,/,%,&&,||,==,!=,>,<,>=,<=u.
+
+5 PHP floats normally use the IEEE 754 double precision format. For simplicity, we use instead decimal numbers in μPHP.
+
+Semantics
+Semantic values correspond to literals, but abstract away from representation de- tails. In particular, leading zeros are dropped when parsing an Int, except for the literal 0, and leading and trailing zeros are dropped when parsing a Float, so
+-004.20 is the semantic float -4.2. With a slight abuse of notation, we use the same font to denote literal and values, as the meaning should be clear from the context. Str, Int, and Float are finite sets, and floating point numbers have limited pre- cision. We denote by Num the union IntYFloat, and by Val the union of all the semantic values above. For any set S and X Ď S, we also define the notation X for the complement of X with respect to S.
+Program states State : Id ÝÑ Val, ranged over by σ, are partial functions
+from identifiers to values. State updates and lookups are defined as follows:
+σrx Ð' vspyq“	v	if x “ y
+σpyq	otherwise
+Statements. The big-step semantics of blocks and statements is defined by the function J¨)¨ : Stmt ˆState ÝÑ State defined below
+J$x = e;)σ “ σrx Ð' Je)σs
+Jif (e) bl1 else bl2)σ “	Jbl1)σ	if toBoolpJe)σq“ true
+Jbl2)σ	if toBoolpJe)σq“ false
+Jwhile (e) bl)σ “ Jif (e) { bl while e bl } else { })σ
+J{ S })σ “ JS)σ
+J{ })σ “ J;)σ “ σ
+JS1 S2)σ “ JS2)pJS1)σq
+All the rules are standard except for the if-else, which contains the first example of type juggling, where the value resulting from evaluating the guard expression e in state σ is then automatically converted to a boolean, using the function toBool defined below, where Num0 “ t0,0.0u, Strfalse “ t"","0"u.
+$’&v	if v P Bool
+	
+true	if v P Num0 Y Strfalse
+This leads us to our first example of odd behaviour in PHP:
+php >  if  (0)  { echo  " yes ";}  else  { echo  " no ";}	//  " no"
+php >  if  ("0")  { echo  " yes ";}  else  { echo  " no ";}	//  " no"
+php >  if  ( 0.0)  { echo  " yes ";}  else  { echo  " no ";}	//  " no"
+php >  if  ("0.0")  { echo  " yes ";}  else  { echo  " no ";}  //  " yes "
+
+Expressions. The semantics of expressions is given by the function J¨)¨ : Exp ˆ
+State ÝÑ Val which we describe case-by-case below. The semantics of a literal is
+
+just the corresponding parsed value, as described at the beginning of this Section. The variable rule returns the value of the corresponding identifier, if it is defined in the current state, and NULL otherwise.
+J$x)σ “	σpxq	if x P dompσq
+NULL	otherwise
+Arithmetic operations are defined on any type of operands:
+
+
+Je1
+e2)σ “ toNumpJe1)σq
+toNumpJe2)σq
+
+where the operands are converted to numbers (integers or floats) via another type juggling function toNum. Let parseNum : Str ÝÑ pNum `tKuq* Str be a function that returns the number that can be parsed as the largest prefix of a string (if any), and the remainder of the string that does not contribute to parsing the number. For example, parseNump".42000.37hi"q “ p0.42, ".37hi"q and parseNump"bye666"q “ pK, "bye666"q. The function toNum is defined by
+v	if v P Int Y Float
+1	if v “ True
+
+
+
+
+
+
+
+When
+
+
+P t+,-,*u,
+0	if parseNumpvq“ pK, vq
+’n	if parseNumpvq“ pn, sq for some s
+corresponds to the most precise corresponding primitive
+
+operation between integers and floats (denoted by t`, ´, *u). So, for example:
+php >  var_dump (3.2*" hi"  +  45  -  "3 bye "* true );  //  float (42)
+
+
+When
+P t/,%u instead,
+implements a μPHP-specific function that returns
+
+false when division by zero occurs.
+
+
+
+n1
+n “	n1{n2	if n2 P Num0
+false	if n2 P Num0
+
+The semantics of comparison operators is tricky, as it depends on the type of the operands. For example, to compare a string with a boolean, first it is converted to a boolean, and then both booleans are compared after being converted to numbers, leading to the perhaps surprising example below.
+php > var_dump ("0" < true );	// bool ( true ) php > var_dump ("0.0" < true ); // bool ( false )
+More formally, we define the semantics for the less-than operator as follows (the other comparison operators follow a similar pattern):
+Je1 < e2)σ “ Je1)σ	Je2)σ
+
+
+
+
+
+Figure 1. Tables with semantics rules for the less-than operator applied to basic values
+
+
+When e1 and e2 reach final values v1 and v2, the semantics rules reported in Figure 1 are applied, where ă is the primitive operator of less-than for numbers, and ăStr is a non-standard comparison between strings. If two strings can be parsed exactly as numbers, they are compared using ă on the parsed numbers; otherwise, they are compared in the lexicographic order ăL.
+
+
+s1 ăS
+s “	n1 ă n2	if parseNumps1q“ pn1, ""q and parseNumps2q“ pn2, ""q
+s1 ăL s2	otherwise
+
+
+This leads to more surprising behaviour. For example,
+php > var_dump ("10" <"9") ;	// bool ( false ) php > var_dump ("10 LOW " <"9 HIGH ");	// bool ( true ) php > var_dump (0+"10 LOW " <"9 HIGH "); // bool ( false )
+where the use of + in the third example forces the use of toNum on the first string (hence on the second one too), and the use of ă instead of ăStr in the comparison.
+The semantics of string concatenation is defined as follows
+
+Je1.e2)σ “ toStrpJe1)σq . toStrpJe2)σq
+
+where . is the primitive operation of string concatenation. The type juggling func- tion toStr is defined below, where FloatInt “ Int?.0x (excluding the degenerate case “.”) represents the floats that can be interpreted as integers without approx- imation, such as .00, 42., 0.0. When an element of FloatInt is concatenation with a string, only its integer part is concatenated.
+
+
+
+
+
+toStr(v)“
+"1"	if v “ true ""	if v “ false
+
+
+"u"	if v P FloatInt and u “ floorpvq
+’%v	if v P Str
+
+
+
+Abstract Interpretation of μPHP
+Our goal is to design an efficient value analysis that retains precise information on the type of variables. Hence, our concrete domain representing the properties of interest is the standard complete lattice x2Val, Ďy. With the above goal in mind, we now define an abstract semantics for μPHP that is parametric in the choice of an abstract domain of values xVal, Ďy.
+
+Abstract Semantics
+Our analysis is non-relational, hence we can somewhat simplify the design of the abstract semantics and the definition of its soundness properties. In particular,
+
+abstract program states
+State :
+Id Ñ
+Val, ranged over by ξ, can partition
+
+the available information per identiﬁer, and be defined as partial functions from identifiers to abstract values. State updates and lookups are defined as for the concrete semantics.
+Statements. The abstract semantics of blocks and statements J¨)¨ : Stmt ˆ
+State ÝÑ State is similar to the concrete one.
+J$x = e;)ξ “ ξrx Ð' Je)ξs
+J{ S })ξ “ JS)ξ
+J{ })ξ “ J; )ξ “ ξ
+JS1 S2)ξ “ JS2)pJS1)ξ)
+
+The rules for assignment, blocks and sequences are analogous to the ones for the concrete semantics. Note that in particular we are considering strong updates to the state: our analysis is flow-sensitive.
+
+
+
+Jif (e) bl1 else bl2)ξ “
+Jbl2)ξ	if γptoBoolpJe)ξqq “ tfalseu
+’%Jbl1)ξ \ Jbl2)ξ	if γptoBoolpJe)ξqq Ě Bool
+
+The rule for if-else is path-sensitive, mimicking the concrete one, yet includes a conservative extra case when the evaluation of the guard does not result in a precise boolean value. It relies on an abstract type juggling function toBool which is to be
+
+defined together with the abstract domain xVal, Ďy, as discussed in Section 4.2.
+Jwhile (e) bl)ξ “ lfpξ pλρ.pρ \ Jif (e) bl else {})ρqq
+The rule for while loops in the concrete semantics can be equivalently formulated as Jwhile (e) bl)σ “ lfpσ pJif (e) then bl else {})q: the abstract rule is simply a conservative approximation, whose computability depends on the definition of abstract domain. 6
+Expressions. The abstract evaluation of expressions is denoted by J¨)¨ : Exp ˆ State ÝÑ Val. Literal values are simply abstracted by the rule JLit)ξ “ αpLitq. The abstract variable look-up rule is analogous to the concrete one, except that looking up an undefined identifier returns αpNULLq instead of NULL. Depending on the choice of Val and the definition of α, that could be a specific element NULL, or J, or a different abstract element.
+J$x)ξ “	ξpxq	if x P dompξq
+αpNULLq	otherwise
+The abstract evaluation of arithmetic expressions is analogous to the concrete case
+
+
+Je1
+e2)ξ “ toNumpJe1)ξq
+toNumpJe2)ξq
+
+
+
+where
+is the abstract operation corresponding to
+, and toNum is the ab-
+
+stract type juggling function corresponding to toNum. Both	and toNum are
+to be defined along with the abstract domain on which they depend. The abstract semantics of the other expressions follows a similar pattern.
+Soundness of the analysis
+We argue that the class of analyses defined by our abstract semantics is sound, assuming that the abstract domain has the right structure, and that the abstract operations provided with such domain satisfy some local soundness conditions.
+Assumption 3.1 (Abstract Domain) The abstract domain xVal, Ďy is a com-
+
+plete lattice, and it forms a Galois connection 2
+domain x2Val, Ďy.
+Val
+γ
+´Ð´´´´Ñ´ Val with the concrete
+
+Assumption 3.2 (Abstract Operations) The abstract operations provided with the domain xVal, Ďy are monotonic and locally sound approximations of the con-
+
+crete ones: @f  .@u, v P
+αpf pvqq Ď f  pαpvqq.
+Val : u Ď v ñ f  puq Ď f  pvq and @f, f  .@v P
+Val :
+
+We can take advantage of the big-step style of our semantics, and of our interest in properties of the final state, to bypass the standard definition of a collecting
+
+6 Our abstract semantics does not use boolean filter functions, because it is not practical to define realistic ones for a programming language as complicated as PHP. This choice has the downside of sacrificing some precision in the semantics of while loops, because we do not refine the information in the abstract state at the end of the loop to reflect that the guard has to be false .
+
+semantics and state our soundness theorem directly in terms of the concrete and abstract semantics. We only need to lift the definition of α from values to states: αpσq“ α ˝ σ, and similarly for γ, Ď.
+Theorem 3.3 (Soundess) The abstract semantics is a sound approximation of the concrete semantics: @s P Stmt : α ˝ Js) Ď Js) ˝ α.
+Proof By induction on the derivation of J¨)¨ (joining the definition for state- ments and expressions), using Assumption 3.1, Assumption 3.2 and standard prop- erties of lattices. We show the case for if-else which is representative of the other cases. Assume that toBoolpJe)qσ “ true (the case when toBoolpJe)q “ false is analogous). Let ξ “ αpσq. By inductive hypothesis, αpJbl1)σq Ď Jbl1)ξ.  By definition, Jbl1)ξ  Ď Jbl1)ξ \ Jbl2)ξ.  Hence, we only need to exclude the case where γptoBoolpJe)ξqq “ tfalseu. By Assumption 3.2, αptoBoolpJe)σqq Ď toBoolpαpJe)σqq. By inductive hypothesis, αpJe)σq Ď Je)ξ. By monotonicity of toBool, toBoolpαpJe)σqq Ď toBoolpJe)ξq. By transitivity of Ď, αptoBoolpJe)σqq Ď toBoolpJe)ξq. By assumption, toBoolpJe)qσ “ true. If γptoBoolpJe)ξqq “ tfalseu, substituting in the equations above, we obtain γpαptrueqq Ď tfalseu. By Assumption 3.1, ttrueu Ď γpαptrueqq, which leads to the contradiction ttrueuĎ tfalseu.	l
+Proposition 3.4 (Incompleteness) The abstract semantics is not complete:
+Ds. α ˝ Js) Ĺ Js) ˝ α.
+
+Proof We show that there is a counterexample even for the most precise abstract domain possible: x2Val, Ďy itself, where α and γ are the identify function. Let P be the μPHP program $x=1; while ($x>0){ $x=$x-1; }. For any σ P State, we have
+pα ˝ JP)qpσq“ σrx Ð' t0us Ĺ σrx Ð' t0, 1us “ pJP) ˝ αqpσq.	l
+The informal meaning of our formal results is that if our analysis finds that a certain property holds, then that property (or possibly a stronger one) also holds across all the concrete executions compatible with the initial abstract state.
+Abstract Domains for Type Juggling
+Equipped with the abstract semantics of Section 3, we can design abstract domains and operations that capture the subtlety of type juggling in μPHP. Rather than giving the definitions upfront, we expound the rationale behind our design, stressing expressivity, modularity and hopefully highlighting subtle points that can be useful to design domains for other languages with similar features.
+Abstract Domains
+We face three main design choices: how to combine the abstraction of the various types of μPHP; how to abstract each type; how to ensure that we can represent as much of the information relevant to type juggling as possible.
+
+Type combination. Let us assume that for each set of basic values T we have defined an abstract type lattice T  . A typical analysis for statically-typed languages may combine abstract types using the coalesced sum lattice, which in our case yields
+
+J
+
+
+Val “
+Null
+Bool
+Int
+Str
+
+
+K
+
+This choice is not appropriate for a dynamically-typed language such as μPHP, as the resulting lattice cannot represent union types. For example, in the lattice above it must be the case that αp5q\ αp3.2q “ J, leading to an unnecessary loss of precision when we convert such value to a string, because it has to be the case
+that toStrpJq “ J. In contrast, in a domain with the union type Int ` Float,
+toStr could have retained the information that numbers are never converted to
+
+empty strings, allowing to derive toStrpInt
+` Floatq “ Str
+
+‰""
+, assuming that
+
+the type abstraction of strings was able to account for such elements. A common
+solution to this problem consists in switching to the cartesian product lattice of the abstract types
+
+
+Val “ Null
+ˆBool
+ˆInt
+ˆFloat ˆStr
+
+
+
+where, for example, the union type Int
+vector pK, K, Int, Float, Kq. 7
+` Float is implicitly represented by the
+
+Type abstraction. Another key design choice is how to abstract the types them- selves. Fore example, consider the μPHP semantics of division. It normally returns a Num except for the case of division-by-zero, where it returns false. Abstracting a value directly to its type, as in αp5q “ Int, is too imprecise because it prevents an analysis from detecting the division-by-zero case, and it forces the return type
+
+to be at best Num
+`Bool, instead of the more precise Num
+`false. Hence, we
+
+include also the constants of each type to the product lattice. We define Null as
+
+the lift, and Bool
+and Str
+as the flat lattices built from the corresponding sets:
+
+
+
+Null
+“ liftpNullq
+Bool
+“ flatpBoolq
+Str
+“ flatpStrq
+
+By a judicious definition of Int as the product lattice of signs, the constant 0, and
+natural numbers, we obtain the discriminating power of the traditional sign domain, plus the precision of numeric constants.
+Int “ flatpt`, ´uq ˆ liftpt0uq ˆ flatpNq
+
+7 The definition of α and γ will be left implicit as it can be understood from the context, as the obvious best approximation.
+
+For example, pJ, K, Jq denotes non-zero integers, and p`, 0, Jq represents non- negative integers. 8 A similar argument applies to Float, which we define as
+
+
+
+Float “
+J
+`	´ ˆ	ˆ 1
+K
+K
+J
+2	3 ¨¨¨ ˆ	ˆ
+K
+K
+
+
+001 12
+J
+
+266 ¨¨¨ K
+
+0.0
+
+K
+
+and is isomorphic to Int ˆliftpt0uq ˆflatpFracqˆliftpt0.0uq, where Frac is the set
+of non-zero “fractional parts” denoted by the regular expression r0..9sxr1..9s. The last component of the product is necessary to distinguish αp0.0q\αp1.2q, which can be zero, from αp0.1q\ αp1.0q, which cannot. For notational convenience, we denote the abstraction n within the type domain T  by αT 7 pnq. We also abbreviate the
+bottom element of a product type, such as pK, K, Kq : Int simply by K (and similar
+for J). Finally, we use the shorthand JBool7 for the element pK, J, K, K, Kq : Val, with the obvious generalisation to other elements or domains.
+Type juggling. Thanks to the definitions above, most of our domains already include enough information to handle type juggling. For example, the definition of toBool depends on the set Num0={0,0.0}. In order to define a precise abstract toBool, we should avoid loss of precision when deciding if an abstract value, once
+concretised, belongs to Num0.  Our domain achieves that, because for example
+γpαp0q\ αp0.0qq “ Num0, and similarly γpαp5q\ αp-3.2qq “ Num0.	The only domain which we need to refine explicitly is that of strings. In fact, toBool also
+
+relies on the set Strfalse “ t"","0"u, but if Str
+is just the flat string domain,
+
+then γpαpStrfalseqq “
+Str
+‰ Strfalse. A solution to this specific problem
+
+
+is to add to Str
+elements representing exactly αpStrfalseq and αpStrfalseq.
+
+The downside is that repeating this process for the other operations leads to a
+proliferation of special cases. For example, the division operation needs to decide if the result of toNum is in Num0. Hence, for a precise toNum we need two new points
+in Str representing precisely αpt"0","0.0"uq and its complement. Moreover, we
+would need to introduce additional structure in the lattice to compare these points and the ones representing αpStrfalseq, αpStrfalseq, and so on. Our proposal is
+instead to simply add all the information that is missing from the Str domain by
+adding to strings additional properties reflecting their value after an hypothetical
+type juggling. We re-define Str as a product involving also booleans, integers and
+floats, interpreted as properties of the corresponding abstract string:
+
+
+Str
+“ flatpStrqˆ Bool
+ˆInt
+ˆFloat
+
+All the points representing properties of interest hypothesised above now are included in the lattice, with the correct ordering relation.	For example, the
+
+8 Some points in our lattice, such as p`, 0, Kq are redundant (zero has no sign). It is possible to optimise the domains to remove such points, slightly increasing the efficiency of the analysis (although the precision remains the same). We leave investigating that direction to future work.
+
+string type of αpStrfalseq is pJ, false, 0, Kq, whereas the one of αp"0","0.0"q is pJ, J, 0, 0.0q. As a final example of the expressivity of our type juggling do- main Val, let x be the abstract value αp"0.0doh"qu αp42q, which in our domain is pK, K, 42, K, p"0.0doh", true, K, 0.0qq. Our domain contains enough information to be able to infer that x is not NULL, that it is true if converted to a boolean, and that the abstract evaluation of 84/x yields pK, false, 2, K, Kq, assuming a suitable
+definition of	(see Section 4.2).
+
+
+Abstract Operations
+We now discuss how to implement abstract operations that take advantage of the information represented by Val.
+Type juggling functions. We focus on the example of toNum as it illustrates all the main issues at hand. Since an abstract value is actually a 5-tuple of in- dividual abstract types, in order to retain precision, we convert each component
+
+independently, using specialised functions such as StrToNum :
+Str
+Ñ Val,
+
+where the result is either an abstract number or K. Hence, the type of toNum
+is Val ÝÑ pValq5. Note that we do not collapse the resulting 5-tuple into a sin- gle Val so that the operation that invoked the type juggling operation can leverage the information at best. For example,
+
+toNumppK, K, 4, K, "6doh"qq “ pKVal7 , KVal7 , 4Int7 , KVal7 , 6Int7 q
+
+and a division by 2Int7 can return “positive integer” instead of “positive number”. The specialised conversions StrToNum, BoolToNum, etc. are straightforward to define, following their concrete counterparts. For example, the latter returns re- spectively KVal7 , 0Int7 , 1Int7 , p`, 0, 1q on the inputs K, true, false, J. Without loss of precision, we define StrToNum as the function λx.π3pxqu π4pxq that joins the
+pre-computed conversions to integer and float associated to the Str value.
+Semantic operations. We now discuss how abstract operations can leverage the expressiveness of our domain. We give the example of division, which is repre- sentative of the other cases. Since toNum has already been applied by the ab- stract semantics of expressions, we now have to divide two 5-tuples of Val, hence
+5	5
+: Val	ˆ Val	ÝÑ Val .
+
+The first step of
+is to normalise each tuple by removing any KVal7 value,
+
+and retaining only its numeric components greater than K, obtaining two vectors
+of at most 6 elements each. For example, let v “ toNumpαptruequ αp"-5foo"qu αp"4.2doh"qq “ pKVal7 , 1Int7 , KVal7 , KVal7 , αp-5q u αp4.2qq. By normalising, we ob- tain npvq“ r1, -5, 4.2s.
+Once we have two normalised (row) vectors z and w, we can compute the anal- ogous of the matrix product zt ˆ 1{w, effectively obtaining a matrix r of dimension
+|z|ˆ |w| where ri,j “ zris{wrjs, and { : pInt `Floatq2 ÝÑ Val is the abstract
+
+division operator defined below
+
+
+
+n1{n2 “
+αpm1
+n1{Int
+m2q	if γpn1q“ tm1u and γpn2q“ tm2u
+7 n2	else, if n1, n2 are both Int
+
+’%toFloatpn1q{Float7toFloatpn2q	otherwise
+where toFloat : Int Ñ Float maps αInt7 pkq to αFloat7 pk.0q. The final step of
+is to join all the elements of r into a single Val. We define
+
+
+u
+v “
+iP1..|x| jP1..|y|
+xris{yrjs	where x “ npuq and y “ npvq.
+
+The abstract division operator { relies on specialised abstract divisions for inte- gers and floats (respectively {Int7 and {Float7 ). When both operands are abstract integers, we perform a further normalisation, separating the information about 0 from the information about N encoded in each operand. For example, npp´, 0, 5qq “ rp´, K, 5q, pK, 0, Kqs. Then, we compute u{Int7 v “  iP1..|x| xris{Int7 {yrjs where
+jP1..|y|
+x “ npuq and y “ npvq, and the inner {Int7 is computed using the rules in Figure 2. The case for {Float7 is analogous.
+For example, let us revisit the example of 84/x from Section 4.1, where this time
+x “ αp"0.0doh"quαp"1argh"quαp42quαp0q“ pK, K, p`, 0, 42q, K, pJ, true, 1, 0.0qq
+We have that nptoNumpxqq “ r1, 0.0, p`, 0, 42qs. The first two divisions are com-
+
+puted directly as αp84
+1q“ αp84q and αp84
+0.0q“ αpfalseq. The third division
+
+is computed as 84{Int7 p`, 0, 42q. The denominator is normalised to r0, 42s, lead-
+
+ing to two further divisions αp84
+0q “ αpfalseq and αp84
+42q “ αp2q. Hence,
+
+the final result is αp84q u αpfalseq u αp2q “ pK, false, p`, K, Jq, J, Jq, where we know that, unless there was a division by zero, we obtain a positive integer. Note
+
+that both normalisation steps introduced by this level of precision.
+Conclusions
+and {Int7 were essential to retain
+
+We have defined the formal semantics of μPHP, a subset of PHP that precisely represents type juggling behaviour, as a basis to explore new and expressive abstract domains for type/value analysis. We have also defined an abstract interpreter that implements, parametrically on the domain, a non-relational, path-sensitive analysis to leverage our abstract domains. We have shown with various examples that our value analysis is more expressive than comparable ones present in the literature. To the best of our knowledge, a novelty of our approach is the definition of the string domain as the product of the string type with other abstract types (integers and floats). This construction helps retaining more precise information about strings after type juggling.
+
+
+
+
+
+
+
+
+7	7
+
+
+
+
+
+
+
+
+
+
+Figure 2. Tables for the abstract operation {7Int7 .
+
+The main limitations of our current work also suggest natural directions for fu- ture work. μPHP covers only a small subset of PHP, and it will be interesting to see how our type juggling domain interacts with the analyses of other challenging lan- guage features such as aliasing, functions, objects and exceptions. Our construction of the type juggling domain strives to be systematic but we do not investigate how an analysis of completeness of the abstract operations, along the lines of [7], may lend further justification to our current design choices, or lead to the completely automated construction of a more precise domain.
+Acknowledgments. This work is partially supported by EPSRC grant EP/K032089/1.
+
+References
+The PHP Group. PHP Zend Engine. http://php.net. Accessed: 2016-06-09.
+
+P. Cousot. Types as abstract interpretations. In POPL’97, 1997.
+P. Cousot and R. Cousot. Abstract interpretation: A unified lattice model for static analysis of programs by construction or approximation of fixpoints. In POPL’77, 1977.
+P. Cousot and R. Cousot. Systematic design of program analysis frameworks. In POPL’79, 1979.
+J. Dahse and T. Holz. Simulation of built-in PHP features for precise static code analysis. In NDSS’14, 2014.
+D. Filaretti and S. Maffeis. An executable formal semantics of PHP. In ECOOP’14, 2014.
+R. Giacobazzi, F. Ranzato, and F. Scozzari. Making abstract interpretations complete. J. ACM, 2000.
+D. Hauzar and J. Kofron. Framework for static analysis of PHP applications. In ECOOP’15, 2015.
+S. H. Jensen, A. Møller, and P. Thiemann. Type analysis for javascript. In SAS’09, 2009.
+N. Jovanovic, C. Kru¨gel, and E. Kirda. Pixy: A static analysis tool for detecting web application vulnerabilities (short paper). In (S&P’06), 2006.
+V. Kashyap, K. Dewey, E. A. Kuefner, J. Wagner, K. Gibbons, J. Sarracino, B. Wiedermann, and
+B. Hardekopf. JSAI: a static analysis platform for javascript. In FSE’14, 2014.
+E. Kneuss, P. Suter, and V. Kuncak. Phantm: PHP analyzer for type mismatch. In FSE’10, 2010.

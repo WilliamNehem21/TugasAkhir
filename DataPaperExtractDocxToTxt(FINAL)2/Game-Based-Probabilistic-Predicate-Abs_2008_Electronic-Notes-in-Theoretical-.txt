@@ -1,0 +1,586 @@
+
+
+Electronic Notes in Theoretical Computer Science 220 (2008) 5–21
+www.elsevier.com/locate/entcs
+
+Game-Based Probabilistic Predicate Abstraction in PRISM 1
+Mark Kattenbelt Marta Kwiatkowska Gethin Norman David Parker
+Oxford University Computing Laboratory, Oxford, UK
+
+Abstract
+Modelling and verification of systems such as communication, network and security protocols, which exhibit both probabilistic and non-deterministic behaviour, typically use Markov Decision Processes (MDPs). For large, complex systems, abstraction techniques are essential. This paper builds on a promising approach for abstraction of MDPs based on stochastic two-player games which provides distinct lower and upper bounds for minimum and maximum probabilistic reachability properties. Existing implementations work at the model level, limiting their scalability. In this paper, we develop language-level abstraction techniques that build game-based abstractions of MDPs directly from high-level descriptions in the PRISM modelling language, using predicate abstraction and SMT solvers. For efficiency, we develop a compositional framework for abstraction. We have applied our techniques to a range of case studies, successfully verifying models larger than was possible with existing implementations. We are also able to demonstrate the benefits of adopting a compositional approach.
+Keywords: Automatic verification, probabilistic model checking, predicate abstraction, Markov models.
+
+Introduction
+Verification of systems that exhibit both non-deterministic and probabilistic be- haviour has proved to be very useful in domains such as communication and net- work protocols, security protocols, and randomised distributed algorithms. Markov Decision Processes (MDPs) are a natural model for such systems and several tools, such as PRISM [13] and LiQuor [4], implement efficient solution methods for these models. As in the field of non-probabilistic model checking, however, the state space explosion problem tends to limit the scalability of these approaches and techniques to counter this are an important area of research.
+Of particular current interest are the development of abstraction techniques for the verification of MDPs [6,8,18,22]. In this paper, we use the abstraction ap- proach of [18], which is based on stochastic two-player games. The key idea is
+
+1 Supported in part by EPSRC grants EP/D07956X and EP/D076625.
+
+1571-0661 © 2008 Elsevier B.V. Open access under CC BY-NC-ND license.
+doi:10.1016/j.entcs.2008.11.016
+
+to separate the non-determinism that is introduced by the abstraction from the non-determinism present in the original MDP. This results in abstract models that provide distinct upper and lower bounds on minimum and maximum reachability probabilities. This is in contrast to alternative abstraction methods [6], where only an upper bound on the maximum probability and a lower bound on the minimum probability can be extracted. Besides being a more informative abstraction, these bounds also provide a measure of the quality of the abstraction. This information is potentially very useful when considering refinement.
+A limitation of the existing implementation in [18] is that abstractions are per- formed at the model level, i.e. the full concrete model (MDP) is constructed and then reduced to the corresponding stochastic game. In this paper, we develop tech- niques to construct the abstraction directly from a high-level description of the MDP (in this case the modelling language of PRISM) using predicate abstraction [12,1,5], which has been very successful in the non-probabilistic setting.
+Predicate abstraction for PRISM models was recently considered in [22], but using the abstraction technique of [6] which represents abstractions as MDPs. Ap- plying predicate abstraction to the approach of [18] provides the additional benefits of the game-based approach but proves to be more involved. This is because the game-based abstraction preserves additional information which is non-trivial to ex- tract from language-level descriptions of PRISM models.
+We present a compositional variant of game-based abstraction of MDPs, explain how to apply it at the level of the PRISM modelling language, and describe an implementation of these techniques using SMT solvers and ‘on-the-fly’ abstraction. We illustrate its applicability on several examples, successfully analysing models larger than is possible with the implementation of [18] and improving performance on others. We also analyse the benefits of employing a compositional approach.
+The remainder of this paper is structured as follows. Section 2 provides back- ground material, including the PRISM modelling language and its semantics. In Section 3 we present a compositional variant of the game-based abstraction method of [18]. In Section 4, we give a game-based variant of PRISM called A–PRISM and describe a predicate abstraction procedure for PRISM models that results in A–PRISM models. Sections 5 and 6 describe our implementation and present exper- imental results from several case studies. We conclude with a discussion of related work and ideas for future development.
+Proofs can be found in the technical report version of this paper [16].
+
+Background
+We assume a set of typed variables V . A valuation of V is a function s mapping each variable in V to a value in its domain. We let val(V ) denote the set of all valuations of V and, for any s ∈ val(V ) and V ' ⊆ V , let s[V ' denote the restriction of s to the domain V '. Furthermore, if s1 ∈ val(V1), s2 ∈ val(V2) and V1 ∩ V2 = ∅, we let s1  s2 denote the valuation of V1 ∪ V2 where (s1  s2)[V1 = s1 and (s1  s2)[V2 = s2. We will often refer to valuations as states. We also assume a finite set Act of actions and
+
+an additional ‘silent’ action τ /∈ Act .
+A probability distribution over a finite set S is a function μ : S → [0, 1] such that
+
+s∈S
+μ(s) = 1. Let Dist(S) denote the set of all distributions over S. For any s ∈ S,
+
+let ηs denote the point distribution at s. If μ1 ∈ Dist(val(V1)), μ2 ∈ Dist(val(V2)) and V1 ∩ V2 = ∅, let μ1  μ2 denote the distribution over val(V1 ∪ V2) such that (μ1  μ2)(s) = μ1(s[V1 ) · μ2(s[V2 ) for all s ∈ val(V1 ∪ V2).
+Definition 2.1 Let V, V ' be sets of variables such that V ' ⊆ V. A transition from
+V to V '‘ is a tuple ⟨s, step⟩ where s ∈ val(V ) and step ⊆ (Act ∪ {τ}) × Dist(val(V ')).
+A transition ⟨s, step⟩ consists of a source state s and non-deterministic choice step between pairs comprising an action and a distribution over target states. We now define (standard CSP-style) parallel composition of transitions.
+Definition 2.2 Suppose V1, V2 ⊆ V are disjoint sets of variables, ⟨s, stepi⟩ is a transition from V to Vi for i ∈ {1, 2} and A ⊆ Act . Let ⟨s, step1⟩ |[A]| ⟨s, step2⟩ denote the transition ⟨s, step⟩ from V to V1 ∪ V2 where ⟨a, μ⟩ ∈ step if and only if one of the following conditions holds:
+a /∈ A and μ = μ1  η(s[V ) for some ⟨a, μ1⟩∈ step1;
+a /∈ A and μ = η(s[V )  μ2 for some ⟨a, μ2⟩∈ step2;
+a ∈ A and μ = μ1  μ2 for some ⟨a, μ1⟩∈ step1 and ⟨a, μ2⟩∈ step2.
+
+Controlled Markov Decision Processes
+The techniques introduced in this paper are for Markov Decision Processes (MDPs). However, in order to adopt a compositional approach, we use a variant called Con- trolled Markov Decision Processes which represent components of an MDP. These are similar to the probabilistic modules of [7].
+Definition 2.3 A Controlled Markov Decision Process (CMDP) is a tuple C =
+⟨V, V ctrl,V ext, Act , sinit, Steps ⟩ where:
+V is a finite set of typed variables;
+V ctrl and V ext partition V into controlled and external variables;
+Act is a finite set of actions;
+sinit ∈ val(V ctrl) is the initial valuation;
+Steps : val(V ) → P((Act ∪ {τ}) × Dist(val(V ctrl))) is the transition function.
+A CMDP specifies the initial values of its controlled variables and how these vari- ables are updated. These updates depend on the values of both its controlled variables and the external variables, which are assumed to be under the control of other components in the system. Given a valuation of all variables s ∈ val(V) the set of action-distribution pairs Steps (s) represents a non-deterministic choice between several behaviours. If the ⟨a, μ⟩ is chosen, then the CMDP performs ac- tion a and then probabilistically selects a new valuation of its controlled variables
+
+according to μ.  The transition function can equivalently be defined as the set
+{⟨s, Steps (s)⟩| s ∈ val(V )} of transitions from V to V ctrl.
+We now describe the parallel composition of CMDPs. Note that CMDPs can only be combined in parallel when they agree on the total set of variables and their control variables are disjoint. We call such CMDPs composable. Let Ci =
+⟨V, V ctrl,V ext, Act i, sinit, Stepsi⟩ for i ∈ {1, 2}.
+i	i	i
+Definition 2.4 The parallel composition of two composable CMDPs C1 and C2 is the CMDP C1 |[A]| C2 = ⟨V, V ctrl,V ext, Act , sinit, Steps ⟩ where:
+V ctrl = V ctrl ∪ V ctrl;
+1	2
+V ext = (V ext ∪ V ext) \ (V ctrl ∪ V ctrl);
+1	2	1	2
+Act = Act 1 ∪ Act 2;
+sinit = sinit  sinit;
+if s ∈ val(V ), then ⟨s, Steps (s)⟩ = ⟨s, Steps 1(s)⟩ |[A]| ⟨s, Steps 2(s)⟩.
+We can also define action renaming and action hiding operations for CMDPs, but for brevity we will omit these from the presentation in this paper.
+Example 2.5 Consider the CMDP Cwalk where V ctrl={val}, V ext={close}, val has domain {0,..., 4} with initial value 2 and close has the type Boolean. For any val-
+uation (v, c) ∈ val({val, close}), StepsC	(v, c) = {⟨τ, 1 · ηv−1 + 1 · ηv+1⟩, ⟨read , ηv⟩}
+walk	2	2
+if v ∈ {1, 2, 3} and equals {⟨read , ηv⟩} otherwise. The CMDP models a random walk that can, at any time, do a read action. Let Cwalk be composed with the CMDP Cobs in which V ctrl={close}, V ext={val}, close has initial value false, and, for (v, c) ∈ val({val, close}), StepsCobs (v, c) = {⟨read , ηclose⟩} if v/=2 and equals
+{⟨read , η¬close⟩} otherwise. This models a CMDP which performs action read , and
+updates close depending on whether val is close to the ends of the walk or not. Graphical representations of these CMDPs are given in Figure 1(a).
+Note that a CMDP for which V ext = ∅ (for example the parallel composition of CMDPs whose controlled variables partition V) is simply an MDP. For an MDP, we are typically interested in quantitative aspects such as probabilistic reachability. An adversary of an MDP is a particular resolution of the non-determinism. Given an MDP, a valuation s ∈ val(V ), a set of valuations F ⊆ val(V ) and an adversary A we use pA(F ) to denote the probability of reaching F from s under adversary A, defined in the usual way [17]. We use p−(F ) = infA pA(F ) and p+(F ) = supA pA(F ) to
+s	s	s	s
+denote the extremal probabilities of reaching F from s [2].
+
+PRISM Models
+We now describe the modelling language used by the PRISM [13] to describe MDPs. This language is based on guarded commands extended with probabilistic choices.
+Definition 2.6 A PRISM model is a tuple P = ⟨var(P), sys, {M1,..., Mm}⟩ con- sisting of a finite set of (Boolean or integer) variables var(P), a system definition sys and a finite set modules {M1,..., Mm}. The system definition sys is a process
+
+algebraic expression containing each of the m modules exactly once. Each module
+M consists of:
+a finite set of local variables var(M ) ⊆ var(P) such that:
+var(M ) are disjoint from the local variables of all other modules;
+each variable var ∈ var(M ) has the initial value init(var );
+init(M ) ∈ val(var(M )) denotes the initial values of var(M );
+a finite set of commands com(M ) where each command cmd ∈ com(M ) includes:
+a guard guard(cmd ) which is a Boolean function over val(var(P));
+an action act(cmd );
+a finite set of updates updates(cmd ) = {⟨λ1, u1⟩,..., ⟨λn, un⟩} such that λi ∈
+(0, 1], Σn	λi = 1 and ui is a function from val(var(P)) to val(var(M )).
+For each command cmd of a module M and valuation s of var(P), supposing
+updates(cmd ) = {⟨λ1, u1⟩,..., ⟨λn, un⟩}, let dist(cmd , s) denote the distribution over
+
+val(var(M )) such that dist(cmd , s)(s') = Σ
+i
+' λi for all s' ∈ val(var(M )). In-
+
+tuitively, dist(cmd , s)(s') is the probability that performing cmd in s updates the
+module’s local variables to s'.
+Definition 2.7 The semantics of a module M of a PRISM model P is given by the CMDP [M ]] = ⟨V, V ctrl,V ext, Act , sinit, Steps ⟩ where:
+V = var(P), V ctrl = var(M ) and V ext = var(P) \ var(M );
+Act = {act(cmd ) | cmd ∈ com(M )}\ {τ };
+sinit = init(M );
+if s ∈ val(var(P)), then ⟨a, μ⟩∈ Steps (s) if and only if there exists cmd ∈ com(M ) such that guard(cmd )(s) holds and ⟨act(cmd ), dist(cmd , s)⟩ = ⟨a, μ⟩.
+The semantics [P] of a PRISM model P is defined according to its system definition sys, using the semantics [M ] of each individual module M , given above, and parallel composition of CMDPs (see Definition 2.4). We assume that var(P) is the disjoint
+union ∪m var(Mi), and hence, for the parallel composition of all modules in a
+PRISM model, the set V ext is empty. In other words, the semantics of a PRISM model is given by an MDP.
+Example 2.8 Figure 1(b) presents a PRISM model of the CMDP in Example 2.5.
+
+
+Abstraction of CMDPs
+In this section we introduce abstractions of CMDPs, using the stochastic two-player game approach of [18] and predicates. A predicate ϕ is over variables V if all valuations of V uniquely determine the truth value of ϕ and we write ϕ(s) to denote the value of ϕ for a valuation s of V . Given a set of predicates Φ, let bool(Φ) be the set of Boolean variables indexed by the predicates in Φ, i.e. the set {bϕ | ϕ ∈ Φ}. Furthermore, for abstraction of a particular CMDP using Φ, we will require that
+
+
+
+
+
+read
+1.0	val /=2
+module walk
+val : [0..4] init 2;
+[] (0<val <4) → 0.5: (val '=val −1) + 0.5: (val '=val +1);
+
+
+
+
+0
+d
+
+1.0
+read val /=2
+
+
+
+
+
+1.0
+close
+
+
+чclose
+val =2
+read
+1.0
+
+
+val =2
+[read ] true → 1.0: true;
+endmodule module obs
+close : bool init false;
+
+
+
+
+
+
+
+read
+
+
+
+
+
+CMDPs.
+read
+[read ] (val /=2) → 1.0: (close'=true);
+[read ] (val =2) → 1.0: (close'=false);
+endmodule
+system walk |[read ]| obs endsystem
+PRISM syntax.
+
+
+Fig. 1. Simple example: a random walk and observer process (see Examples 2.5 and 2.8).
+every predicate is either over only controlled variables or only external variables of this component. This partitions the predicates into Φctrl and Φext.
+
+Abstract Controlled Markov Decision Processes
+In order to present a compositional variant of game-based MDP abstraction, we introduce Abstract Controlled Markov Decision Processes (ACMDPs) which are a variant of the class of stochastic two-player games used in [18].
+Definition 3.1 An Abstract Controlled Markov Decision Process (ACMDP) is a tuple A = ⟨V , V ctrl, V ext, Act , sinit, Steps ⟩ where:
+
+V is a set of typed variables;
+
+V ctrl and V ext partition V into controlled and external variables;
+
+Act is a finite set of actions;
+sinit ∈ val(V ctrl) is the initial valuation;
+Steps : val(V ) → У(У((Act ∪ {τ}) × Dist(val(V ctrl)))) is the transition function.
+The crucial difference between CMDPs and ACMDPs is that the transition function now returns sets of sets of action-distribution pairs. This means ACMDPs capture two levels of non-determinism: the choice of a set of action-distribution pairs, and then the choice of an element in this set. This two-level non-determinism is equiv- alent to that of the stochastic two-player games used in [18], where first player 1 makes a choice, then player 2 does, followed by a probabilistic choice.
+We now describe the parallel composition of ACMDPs. As for CMDPs, ACMDPs can only be combined when they agree on the total set of variables and their control variables are disjoint.  We call such ACMDPs composable.  Let Ai =
+⟨V , V ctrl, V ext, Act i, sinit, Stepsi⟩ for i ∈ {1, 2}.
+i	i	i
+Definition 3.2 The parallel composition of two composable ACMDPs A1 and A2
+is the ACMDP A1 |[A]| A2 = ⟨V , V ctrl, V ext, Act , sinit, Steps ⟩ where
+
+
+	
+V ctrl = V ctrl ∪ V ctrl;
+1	2
+V ext = (V ext ∪ V ext) \ (V ctrl ∪ V ctrl);
+1	2	1	2
+Act = Act 1 ∪ Act 2;
+
+sinit = sinit  sinit;
+
+if s ∈ val(V ), then step ∈ Steps (s) if and only if ⟨s, step⟩ = ⟨s, step1⟩ |[A]| ⟨s, step2⟩
+for some step1 ∈ Steps 1(s) and step2 ∈ Steps 2(s).
+
+Like the relation between CMDPs and MDPs, an ACMDP for which V ext = ∅ is equivalent to a stochastic two-player game from [18]. A player 1 strategy in such an ACMDP is a particular resolution of the first non-deterministic choice of transitions in the ACMDP, whereas a player 2 strategy resolves the second non-deterministic choice. Given a valuation s ∈ val(V ), a set of valuations F ⊆ val(V ) and strategy pair σ1, σ2, we use pσ1,σ2 (F ) to denote the probability of reaching F from s under the strategies σ1, σ2. Like for MDPs, we define extremal values as:
+p−−(F ) = inf inf pσ1,σ2 (F )	p+−(F ) = sup inf pσ1,σ2 (F )
+
+s	σ1 σ2	s
+s	σ	σ2	s
+
+p−+(F ) = inf sup pσ1,σ2 (F )	p++(F ) = sup sup pσ1,σ2 (F )
+
+s	σ1 σ	s
+s	s
+σ1  σ2
+
+Predicate Abstraction for CMDPs
+In this section we introduce a compositional and predicate-based extension of the abstraction procedure described in [18]. Like in non-probabilistic predicate abstrac- tion [1], we will represent an abstract state using Boolean variables bool(Φ) indexed by a set of predicates Φ. We will denote abstractions with respect to Φ by α( · , Φ), which we now define for states, distributions, transitions and then CMDPs.
+Definition 3.3 Givena set of variables V and predicates Φ over V , the abstractions of a valuation s ∈ val(V ) and distribution μ ∈ Dist(val(V )) with respect to Φ are defined as follows:
+α(s, Φ) is the valuation of bool(Φ) where α(s, Φ)(bϕ)=ϕ(s) for all ϕ ∈ Φ;
+
+α(μ, Φ) is the distribution over val(bool(Φ)) where α(μ, Φ)(s) = Σ for all s ∈ val(bool(Φ)).
+
+α(s,Φ)=s
+μ(s)
+
+Definition 3.4 Given a set of variables V, subset V ' ⊆ V and sets of predi- cates Φ and Φ' ⊆ Φ over V and V ', the abstraction of a transition ⟨s, step⟩ from
+V to V ' with respect to Φ, denoted α(⟨s, step⟩, Φ), is given by the transition
+⟨α(s, Φ), {⟨a, α(μ, Φ')⟩| ⟨a, μ⟩∈ step}⟩ from bool(Φ) to bool(Φ').
+We now define an abstraction function over CMDPs. For the remainder of Section 3, we fix a CMDP C = ⟨V, V ctrl,V ext, Act , sinit, Steps ⟩ and set of predicates Φ over V .
+Definition 3.5 The abstraction of CMDP C with respect to the predicates Φ is the ACMDP α(C, Φ) = ⟨V , V ctrl, V ext, Act , sinit, Steps ⟩ where:
+V = bool(Φ);
+
+V ctrl = bool(Φctrl);
+V ext = bool(Φext);
+
+sinit = α(sinit, Φctrl);
+if s ∈ val(V ), then step ∈ Steps (s) if and only if there exists s ∈ val(V ) such that
+α(⟨s, Steps (s)⟩, Φ) = ⟨s, step⟩.
+Example 3.6 Consider the CMDP Cwalk of Example 2.5 and set of predicates Φ = {(val =0), (val =4), (close)}. Applying Definition 3.5, we obtain the ACMDP depicted in Figure 2(a) with V ctrl = {bval=0, bval=4} and V ext = {bclose}. The states of the ACMDP are shown as rectangles and the initial state as a double rectangle. The first non-deterministic choice is represented by the circles within a state, and the second non-deterministic choice by outgoing distributions from a circle. Since the external variables have no influence, they are omitted.
+It is straightforward to show that applying Definition 3.5 to a CMDP for which V ext = ∅ yields an ACMDP (with V ext = ∅) equivalent to the stochastic two-player game derived from the abstraction procedure described in [18]. Therefore the results of [18] carry over to this setting; in particular, by analysing the ACMDP α(C, Φ) we can obtain upper and lower bounds for both minimum and maximum reachability probabilities of the CMDP C. More formally, for all concrete valuations s ∈ val(V) and abstract reachability objectives F ⊆ val(V ) we have:
+
+
+p−−	(F ) ≤ p−({s' | α(s', Φ) ∈ F}) ≤ p+−
+(F )
+
+α(s,Φ)	s
+α(s,Φ)
+
+p−+	(F ) ≤ p+({s' | α(s', Φ) ∈ F}) ≤ p++
+(F )
+
+α(s,Φ)	s
+α(s,Φ)
+
+Compositional Abstraction of CMDPs
+The abstraction of Definition 3.5 can be applied to any CMDP but, as the following example demonstrates, parallel composition and abstraction do not commute.
+Example 3.7 Consider again Example 2.5 (Figure 1(a)) and set of predicates Φ =
+{(val =0), (val =4), (close)}. For the abstract valuation s = (чbval=0, чbval=4, bclose) from Definition 3.5 it follows that {⟨τ, η(¬bval =0,¬bval =4)⟩, ⟨read , η(¬bval =0,¬bval =4)⟩} and
+
+{⟨read , ηbclose ⟩} are in Steps α(C
+
+obs
+,Φ)(s). Therefore, by Definition 3.2, it follows that
+
+{⟨τ, ηs⟩, ⟨read , ηs⟩} is in Steps α(C
+
+walk
+,Φ) |[read ]| α(C
+
+obs
+,Φ)(s). However, no valuation (v, c)
+
+abstracts to s and induces this transition in α(Cwalk |[read ]| Cobs, Φ). More precisely, if the τ transition abstracts to a self-loop, then v=2, and if the read transition sets close to true, then v /=2.
+As this example illustrates, a compositional abstraction may introduce spurious transitions, resulting in an over-approximation of the non-compositional abstraction and thus less precise lower and upper bounds for probabilistic reachability. Although such abstractions may still lead to useful results, we now introduce the notion of abstraction preserving CMDPs, for which compositional abstraction is precise (i.e. equivalent to the non-compositional abstraction).
+
+Definition 3.8 The CMDP C is called abstraction preserving with respect to the predicates Φ if for any s, s' ∈ val(V ) such that s[V ctrl = s'[V ctrl and α(s, Φext) = α(s', Φext), then α(⟨s, Steps (s)⟩, Φ) = α(⟨s', Steps (s')⟩, Φ).
+Intuitively, this states that any valuations which agree on control variables and satisfy the same external predicates yield the same abstract transitions. As the fol- lowing two results show, this property is both preserved under parallel composition and ensures a precise abstraction under parallel composition.
+Proposition 3.9 Let C1 and C2 be composable CMDPs and A be a set of actions. If C1 and C2 are abstraction preserving with respect to the predicates Φ, then their composition C1 |[A]| C2 is also abstraction preserving with respect to Φ.
+Proposition 3.10 Let C1 and C2 be composable CMDPs and A be a set of actions. If C1 and C2 are abstraction preserving with respect to the predicates Φ, then:
+α(C1, Φ) |[A]| α(C2, Φ) = α(C1 |[A]| C2, Φ) .
+
+From Proposition 3.9 and Proposition 3.10, we can infer that a compositional ab- straction is precise if each individual component is abstraction preserving.
+Example 3.11 Consider the CMDP Cobs from Example 2.5 and set of predicates Φ = {(val =0), (val =4), (close)}. This CMDP is not abstraction preserving with respect to Φ. For example, the valuations s = (2, true) and s' = (3, true) agree on the value of close and α(s, Φext) = α(s', Φext) = (чbval=0 , чbval=4 ).  However,
+
+α(⟨s, Steps Cobs
+(s)⟩, Φ) = ⟨α(s, Φ), {⟨read , η¬b
+
+close
+⟩}⟩ while α(⟨s', Steps C
+(s')⟩, Φ) =
+
+⟨α(s', Φ), {⟨read , ηb
+
+close
+⟩}⟩. If we extend Φ with the predicate (val =2), then Cobs is
+
+abstraction preserving.
+
+Abstraction of PRISM Models
+Suppose we wish to abstract a PRISM model. One possibility is to (compositionally or non-compositionally) apply the abstraction method of Section 3 to its CMDP semantics. In either case, the disadvantage of such a method is that the concrete CMDPs have to be constructed, limiting the applicability of the approach. In this section we define a language-level abstraction method to remedy the situation.
+
+A–PRISM Models
+For our language-level abstraction, we introduce the A–PRISM language, an exten- sion of the PRISM language with an additional element of choice.
+
+Definition 4.1 An A–PRISM model is a tuple A = ⟨var(A), sys, {M 1,..., Mm}⟩. The only difference between this and a PRISM model is the definition of the com- mands com(M ) for each module M . Each command cmd ∈ com(M ) includes:
+
+a guard guard(cmd ) which is a Boolean function over val(var(A));
+
+
+
+
+
+
+
+
+
+
+1.
+
+
+
+
+
+
+
+
+
+
+
+
+ACMDP.
+
+
+
+
+
+
+
+
+
+
+
+read
+module walk
+b val0 : bool init false;
+
+b val4 : bool init false;
+(!b val0 &!b val4 ) [read ] → 1.0: true;
+[] → 1.0: true;
+(!b val0 &!b val4 ) [read ] → 1.0: true;
+[] → 0.5: (b val0 '=true)+ 0.5: true; (!b val0 &!b val4 ) [read ] → 1.0: true;
+[] → 0.5: true + 0.5: (b val4 '=true); (b val0 &!b val4 ) [read ] → 1.0: true;
+(!b val0 &b val4 ) [read ] → 1.0: true;
+endmodule
+A–PRISM syntax.
+
+
+Fig. 2. Abstraction of the random walk component of Figure 1 (see Example 3.6).
+a finite set of choices choices(cmd ) where each chc ∈ choices(cmd ) consists of an action act(chc) and a finite set of updates updates(chc) = {⟨λ1, u1⟩,..., ⟨λn, un⟩}
+such that λi ∈ (0, 1], Σn	λi = 1 and ui is a function from var(A) to var(M ).
+
+For a choice chc of a command and valuation s ∈ val(var(A)), supposing updates(chc) = 
+{⟨λ1, u1⟩,..., ⟨λn, un⟩}, let dist(chc, s) denote the distribution over var(M ) such that
+
+dist(chc, s)(s') = Σ
+i
+
+
+' λi for all s' ∈ val(var(M )).
+
+
+
+Definition 4.2 The semantics of a module M of A–PRISM model A is given by the ACMDP [M ]]] = ⟨V , V ctrl, V ext, Act , sinit, Steps ⟩, where:
+V = var(A), V ctrl = var(M ) and V ext = var(A) \ var(M );
+
+Act = {act(chc) | cmd ∈ com(M ), chc ∈ choices(cmd )}\ {τ };
+sinit = init(M );
+
+if s ∈ val(var(A)), then step ∈ Steps (s) if and only if there exists a command cmd ∈ com(M ) such that step = {⟨act(chc), dist(chc, s)⟩| chc ∈ choices(cmd )} and guard(cmd )(s) holds.
+The semantics [[[A ] of an A–PRISM model A is defined according to its system definition sys, using the semantics [M ] of each individual module M , given above, and parallel composition of ACMDPs (see Definition 3.2).
+The ‘first’ non-deterministic choices of [M ] are caused by overlaps between the guards of commands, whereas the ‘second’ non-deterministic choices are induced by the choices within commands.
+Example 4.3 Figure 2 shows an A–PRISM module and its ACMDP semantics.
+
+Language-level Abstraction of PRISM Models
+In this section we introduce a language-level abstraction method for PRISM. We assume a fixed PRISM model P = ⟨var(P), sys, {M1,..., Mm}⟩ and a set of predi- cates Φ which is partitioned into subsets ΦM1 ,..., ΦMm over the local variables of
+
+the modules M1,..., Mm. The abstraction of P is defined as the A–PRISM model:
+
+β(P, Φ) = ⟨bool(Φ), β(sys), {β(M1, Φ),..., β(Mm, Φ)}⟩
+
+where the system definition β(sys) is a syntactic copy of sys and each module M is replaced by the language-level abstraction β(M, Φ), defined below.
+Definition 4.4 The language-level abstraction of a module M of P is the A– PRISM module β(M, Φ) where:
+the local variables var(β(M, Φ)) are bool(ΦM );
+
+the initial value init(bϕ) equals ϕ(init(M )) for all bϕ ∈ bool(ΦM );
+the set of commands com(β(M, Φ)) equals {cmds | s ∈ val(var(P))} where
+
+guard(cmds) = 
+ϕ∈Φ
+(bϕ = ϕ(s)),
+
+choices(cmds) = {cmd | cmd ∈ com(M ), guard(cmd )(s)} with
+act(cmd ) = act(cmd )
+
+if updates(cmd ) = {⟨λ1, u1⟩,..., ⟨λn, un⟩} and u is the constant function that returns α(u(s), ΦM ), then updates(cmd ) = {⟨Σ    λj, ui⟩| 1 ≤ i ≤ n}.
+The results below illustrate that using the language-level method we obtain the same abstraction as with the model-level abstraction of Section 3.2.
+Proposition 4.5 If M is a module of P, then [[[β(M, Φ)]]] = α([[M ]], Φ). Combining this with the results of the previous sections we have the following.
+Theorem 4.6 If [[M ]] is abstract preserving with respect to Φ for each module M
+of P, then [[[β(P, Φ)]]] = α([[P]], Φ).
+Figure 3 presents an overview of the correspondence between the model-level (α) and language-level (β) abstractions.
+The remaining question is how to check abstraction preservation at the language level. We now outline a simple check which guarantees this. It is always possible to rewrite a single PRISM command into commands with disjoint guards such that the updates only contain local variables. Now, if we have a PRISM module containing only commands of this form, then to check its semantics is abstraction preserving it is sufficient to show that if s, s' ∈ val(var(P)) such that s[var(M)= s'[var(M) and α(s, Φ) = α(s', Φ), then guard(cmd )(s) = guard(cmd )(s') for all commands cmd .
+
+Implementation
+We have built prototype tools both for our language-level abstraction (translation from PRISM to A–PRISM) and model checking A–PRISM models. The model checker is a relatively simple extension of PRISM’s MTBDD model checking engine for MDPs. In the remainder of this section we will discuss the abstraction tool.
+
+
+PRISM
+Language-level Abstraction (β)
+
+A–PRISM
+
+
+
+
+
+
+
+
+
+
+
+
+CMDP	ACMDP
+Fig. 3. Relation between model-level and language-level abstraction functions.
+Abstraction with SMT Solvers
+The key step in the translation of a (concrete) PRISM model to an (abstract) A–PRISM model is the construction of abstract commands, as described in Defini- tion 4.4. For this, the implementation uses ALL-SAT procedures over the theories of integer arithmetic and fixed-size bit-vectors through the SMT solver Yices [10]. This is based on the principles described in [5,20] for predicate abstraction of non- probabilistic systems.
+In Definition 4.4 each abstract command is induced by a concrete valuation and the concrete commands enabled for this valuation. However, considering each con- crete valuation individually is clearly inefficient. Our implementation therefore em- ploys an approach which detects multiple valuations inducing identical commands.
+The basic idea is to instead enumerate what we call overlaps, which are combinations
+of commands that can be simultaneously enabled.
+Formally, an overlap of module M from a PRISM model P is a set of commands O ⊆ com(M ) for which there exists s ∈ val(var(P)) such that cmd ∈ O if and only if guard(cmd )(s). Given a module M , we first find all overlaps of M with an ALL-SAT procedure 2 . Then, for a given overlap O, we find the corresponding abstract commands, again with an ALL-SAT procedure. To optimise this approach, we remove unnecessary predicates both from the guards and updates of abstract commands. For example, we do not include any predicates in an abstract update if the corresponding concrete updates do not influence their values.
+
+‘On-the-Fly’ Abstraction
+During prototyping, our implementation would often find a large number of over- laps, making the ALL-SAT procedures infeasible. However, further investigation revealed that the majority of these overlaps were induced by unreachable concrete valuations. Therefore, the prototype was extended with an ‘on-the-fly’ abstraction method to overcome this problem. Like in explicit-state model checking, this is achieved by keeping a stack of reachable abstract valuations of bool(ΦM ). Initially,
+
+2 The algorithm to check if a PRISM module is abstraction preserving can be implemented similarly.
+
+this stack only contains the element α(sinit, ΦM ). The method takes individual ab- stract valuations off the stack, constructs the abstract commands for this valuation and adds any new abstract valuations that are the target of this command to the stack. Note that, since the tool now constructs abstract commands for each abstract state s separately, only commands that are enabled for some valuation s such that α(s, ΦM ) = s need be considered when searching for overlaps of these commands.
+Although this ‘on-the-fly’ abstraction method does perform reachability over abstract states, it is important to stress that, unlike [18], it does not require the construction of the reachable concrete state space or take into account whether concrete states are reachable.
+
+Experimental Results
+We have tested the performance of our implementation on three case studies: 3
+An extension of the sliding window protocol of [21] where channels lose messages probabilistically instead of non-deterministically and a notion of timeout is in- cluded. We fix the window size of the sender (2) and receiver (1), buffer size of the channels (2) and sequence numbers (modulo 4) while varying the number of data frames (D) in the source. We analyse ‘the maximum probability of sending D data frames without a timeout ’ using an abstraction that removes the values of the data frames. In the compositional approach, we abstract the sender and data channel separately from the receiver and acknowledgement channel.
+IPv4 Zeroconf protocol [3], as described in [18], parameterised by the number of configured hosts (N ) and with 64 IP addresses. We encode the abstraction of [18] into predicates and consider ‘the minimum probability that the host eventually secures an IP address’. In the compositional approach, the configuring host is abstracted separately from the channel and configured hosts.
+Israeli and Jalfon’s self-stabilisation protocol [15] for a ring with N processes. We encode the abstraction of [9] into predicates and analyse ‘the minimum probability that the ring eventually stabilises’. Since each predicate refers to variables from all components of the system, this model cannot be abstracted compositionally.
+Figure 4 presents a summary of the performance for each case study. For the full concrete model, we give the number of states, the number of PRISM commands and the time required to perform model checking in PRISM (to ensure a fair comparison, we use PRISM’s MTBDD engine). For the abstract model, we show the number of states, the time to perform model checking with our prototype and, for each of the two abstraction approaches (non-compositional and compositional), the number of A–PRISM commands and the time required for abstraction. All times are in seconds and experiments were run on an AMD Athlon 4600+ with 2GB RAM.
+Figure 5 gives quantitative results obtained from the models: lower and upper bounds from the abstract model and, where possible, exact answers from the con-
+
+3 Files for the case studies are available from http://www.prismmodelchecker.org/files/qapl08/.
+
+
+Fig. 4. Experimental results of compositional and non-compositional language-level abstraction.
+
+
+crete model. This, together with Figure 4, confirms that the game-based abstraction works well, in all cases providing tight lower and upper bounds from relatively small abstract models.
+A key observation from the results is that we successfully managed to analyse models (for the sliding window protocol) larger than is possible with the model-level implementation of game-based abstraction from [18]. Furthermore, for the larger Zeroconf models, building and checking the abstraction is more efficient than check- ing the full model. In all cases, the use of ‘on-the-fly’ abstraction is essential to make the abstraction process feasible. This is because the number of potential overlaps, if reachability is not considered, is prohibitively large. The worst performance is observed for the Israeli & Jalfon’s protocol. For this model, the generation of ab- stract commands described in Section 5.1 needs to consider every concrete state in the model (the worst possible scenario), resulting in a large number of calls to the SMT solver and thus a very slow abstraction time.
+As regards a comparison of the compositional and non-compositional approaches to abstraction, we observe varied results. For Zeroconf models, the compositional abstraction significantly outperforms the non-compositional one, both in terms of abstraction time and A–PRISM model size, but for the sliding window protocol the reverse is true. In fact, this is due to the general suitability of the models to a compositional analysis. For the sliding window protocol, each component makes no assumptions about the content (and ordering) of incoming messages and thus, when considered in isolation, its (concrete or abstract) state space is much larger. This makes the compositional approach perform poorly. What is very encouraging, however, is that for models which can be decomposed without such a blow-up (such as Zeroconf) our composition approach can exploit this and performs much better.
+
+
+
+1
+
+0.8
+
+0.6
+
+0.4
+
+0.2
+
+0
+
+
+5	10	15	20
+D (number of data frames)
+0.15
+
+
+0.1
+
+
+0.05
+
+
+0
+8
+
+
+
+
+
+
+
+
+
+
+
+10	12	14
+T (seconds)
+0.2
+
+0.15
+
+0.1
+
+0.05
+
+0
+
+
+
+
+
+
+
+
+
+
+
+80	90  100  110  120
+T (time units)
+
+Sliding window protocol.
+Zeroconf (N=8).
+Israeli and Jalfon (N=20).
+
+Fig. 5. Quantitative results obtained using language-level game-based abstraction.
+Related Work
+Practical approaches for abstracting MDPs are presented in [6,18], the former us- ing MDPs themselves as abstract models and the latter using stochastic two-player games. In [6] the tool RAPTURE is presented which performs successive abstrac- tions and refinements for checking bounds on reachability probabilities. In [18], a prototype implementation is used to construct abstract models from the correspond- ing MDPs and partition of the state space and compute upper and lower bounds on reachability probabilities.
+Predicate abstraction techniques [12] are prevalent in non-probabilistic verifica- tion. In the probabilistic case, the only other work we are aware of is [22] which introduces the PASS tool for language-level abstraction of PRISM models using the abstract approach of [6]. Like to our approach, PASS employs an SMT solver in the abstraction procedure. A key difference, however, is our use of stochastic two- player games rather than MDPs. While this will in general provide a more useful abstraction, it is also more difficult to apply to predicate abstraction. In [22] each command of a PRISM module can be abstracted separately. Here, as described in Section 5, we must consider overlaps between commands in order to distinguish between the two types of non-determinism. To improve efficiency, we also adopt a compositional approach to abstraction and use ‘on-the-fly’ techniques.
+Also relevant is the ‘magnifying-lens abstraction’ (MLA) approach of [8], which computes lower and upper bounds for PCTL formulae on MDPs. This is done by partitioning the state space into regions and analysing each region separately. It is still necessary to build the full MDP, however. Finally, approaches have also been proposed for abstracting discrete-time Markov chains [11,14], using interval-based extensions of Markov chains, but no implementations or results were presented.
+
+Conclusions
+We have introduced a method to obtain stochastic two-player game abstractions of MDPs, directly from high-level model descriptions in the PRISM language. Our approach is based on a compositional reformulation of the abstraction techniques from [18] and the use of predicate abstraction. Although a compositional abstraction is potentially an over-approximation (compared to the non-compositional version),
+
+we provide conditions which guarantee a precise abstraction. We have developed an implementation of our techniques based on the SMT solver Yices and present experimental results from a range of case studies, illustrating how our work can generate game-based abstractions for larger models than was previously possible. We also highlight the benefits of adopting a compositional approach.
+In the future, we hope to improve the performance of our tool chain using symbolic decision procedures [19]. We also plan to integrate this with ongoing work to develop an abstraction-refinement loop for MDP verification. Finally, we also intend to extend the current method to imperative programming languages.
+
+References
+Ball, T., T. Millstein and S. K. Rajamani, Automatic predicate abstraction of C programs, SIGPLAN Notices 36 (2001), pp. 203–213.
+Bianco, A. and L. de Alfaro, Model checking of probabilistic and nondeterministic systems, in:
+P. S. Thiagarajan, editor, Proc. 15th Conf. on Foundations of Software Technology and Theoretical Computer Science (FSTTC‘95), LNCS 1026 (1995), pp. 499–513.
+Cheshire, S., B. Adoba and E. Gutterman, Dynamic configuration of IPv4 link local addresses, available from http://www.ietf.org/rfc/rfc3927.txt.
+Ciesinski, F. and C. Baier, LiQuor: A tool for qualitative and quantitative linear time analysis of reactive systems, in: Proc. 3rd Int. Conf. Quantitative Evaluation of Systems (QEST‘06) (2006), pp. 131–132.
+Clarke, E., D. Kroening, N. Sharygina and K. Yorav, Predicate abstraction of ANSI-C programs using SAT, Formal Methods in System Design 25 (2004), pp. 105–127.
+D’Argenio, P., B. Jeannet, H. Jensen and K. Larsen, Reachability analysis of probabilistic systems by successive refinements, in: L. de Alfaro and S. Gilmore, editors, Proc. 1st Joint Int. Workshop on Process Algebra and Probabilistic Methods, Performance Modeling and Verification (PAPM/PROBMIV‘01), LNCS 2165 (2001), pp. 39–56.
+de Alfaro, L., T. Henzinger and R. Jhala, Compositional methods for probabilistic systems, in: K. Larsen and M. Nielsen, editors, Proc. 12th Int. Conf. Concurrency Theory (CONCUR‘01), LNCS 2154 (2001),
+pp. 351–365.
+de Alfaro, L. and P. Roy, Magnifying-lens abstraction for Markov decision processes, in: W. Damm and H. Hermanns, editors, Proc. 19th Int. Conf. Computer Aided Verification (CAV‘07), LNCS 4590 (2007), pp. 325–338.
+Duflot, M., L. Fribourg and C. Picaronny, Randomized finite-state distributed algorithms as Markov chains, in: J. Welch, editor, Proc. 15th Int. Conf. Distributed Computing (DISC‘01), LNCS 2180 (2001), pp. 240–254.
+Dutertre, B. and L. de Moura, A fast linear-arithmetic solver for DPLL(T), in: T. Ball and R. Jones, editors, Proc. 18th Int. Conf. Computer Aided Verification (CAV‘06), LNCS 4114 (2006), pp. 81–94.
+Fecher, H., M. Leucker and V. Wolf, Don’t know in probabilistic systems, in: A. Valmari, editor, Proc. 13th Int. SPIN Workshop (SPIN‘06), LNCS 3925 (2006), pp. 71–88.
+Graf, S. and H. Sa¨ıdi, Construction of abstract state graphs with PVS, in: O. Grumberg, editor, Proc. 9th Int. Conf. Computer Aided Verification (CAV‘97), LNCS 1254 (1997), pp. 72–83.
+Hinton, A., M. Kwiatkowska, G. Norman and D. Parker, PRISM: A tool for automatic verification of probabilistic systems, in: H. Hermanns and J. Palsberg, editors, Proc. 12th Int. Conf. Tools and Algorithms for the Construction and Analysis of Systems (TACAS‘06), LNCS 3920 (2006), pp. 441– 444.
+Huth, M., On finite-state approximants for probabilistic computation tree logic, Theoretical Computer Science 346 (2005), pp. 113–134.
+
+
+Israeli, A. and M. Jalfon, Token management schemes and random walks yield self-stabilizing mutual exclusion, in: Proc. 9th ACM Symp. Principles of Distributed Computing (PODC‘90) (1990), pp. 119– 131.
+Kattenbelt, M., M. Kwiatkowska, G. Norman and D. Parker, Game-based probabilistic predicate abstraction in PRISM, Technical Report RR-08-01, Oxford University Computing Laboratory (2008).
+Kemeny, J. G., J. L. Snell and A. W. Knapp, “Denumerable Markov Chains,” Springer-Verlag, 1976, 2 edition.
+Kwiatkowska, M., G. Norman and D. Parker, Game-based abstraction for Markov decision processes, in: Proc. 3rd Int. Conf. Quantitative Evaluation of Systems (QEST‘06) (2006), pp. 157–166.
+Lahiri, S., T. Ball and B. Cook, Predicate abstraction via symbolic decision procedures, in: K. Etessami and S. Rajamani, editors, Proc. 17th Int. Conf. on Computer Aided Verification (CAV‘05), LNCS 3576 (2005), pp. 24–38.
+Lahiri, S. K., R. Nieuwenhuis and A. Oliveras, SMT techniques for fast predicate abstraction, in: T. Ball and R. B. Jones, editors, Proc. 18th Int. Conf. Computer Aided Verification (CAV‘06), LNCS 4144 (2006), pp. 424–437.
+Stahl, K., K. Baukus, Y. Lakhnech and M. Steffen, Divide, abstract, and model-check, in: D. Dams,
+R. Gerth, S. Leue and M. Massink, editors, Proc. 5th and 6th Int. SPIN Workshops (SPIN‘99), LNCS
+1680 (1999), pp. 57–76.
+Wachter, B., L. Zhang and H. Hermanns, Probabilistic model checking modulo theories, in: Proc. 4th Int. Conf. Quantitative Evaluation of Systems (QEST‘07) (2007), pp. 119–128.

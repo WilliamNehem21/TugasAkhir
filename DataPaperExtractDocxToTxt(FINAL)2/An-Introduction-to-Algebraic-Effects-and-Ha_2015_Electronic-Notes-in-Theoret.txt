@@ -1,0 +1,540 @@
+Available online at www.sciencedirect.com
+
+
+Electronic Notes in Theoretical Computer Science 319 (2015) 19–35
+www.elsevier.com/locate/entcs
+
+An Introduction to Algebraic Effects and Handlers
+Invited tutorial paper
+
+Matija Pretnar1
+
+Faculty of Mathematics and Physics University of Ljubljana
+Slovenia
+
+
+
+
+Abstract
+This paper is a tutorial on algebraic effects and handlers. In it, we explain what algebraic effects are, give ample examples to explain how handlers work, define an operational semantics and a type & effect system, show how one can reason about effects, and give pointers for further reading.
+Keywords: algebraic effects, handlers, effect system, semantics, logic, tutorial
+
+Algebraic effects are an approach to computational effects based on a premise that impure behaviour arises from a set of operations such as get & set for mutable store, read & print for interactive input & output, or raise for exceptions [16,18]. This nat- urally gives rise to handlers not only of exceptions, but of any other effect, yielding a novel concept that, amongst others, can capture stream redirection, backtracking, co-operative multi-threading, and delimited continuations [21,22,5].
+I keep hearing from people that they are interested in algebraic effects and handlers, but do not know where to start. This is what this tutorial hopes to fix. We will look at how to program with algebraic effects and handlers, how to model them, and how to reason about them. The tutorial requires no special background knowledge except for a basic familiarity with the theory of programming languages (a good introduction can be found in [8,15]).
+
+http://dx.doi.org/10.1016/j.entcs.2015.12.003
+1571-0661/© 2015 The Author. Published by Elsevier B.V.
+This is an open access article under the CC BY license (http://creativecommons.org/licenses/by/4.0/).
+
+
+
+
+value v :: = x	variable
+true	false	boolean constants
+fun x '→c	function
+h	handler
+handler h :: = handler {return x '→cr ,	(optional) return clause
+op1(x; k) '→c1,..., opn(x; k) '→cn}	operation clauses
+computation c :: = return v	return
+  op(v; y. c)	operation call
+  do x → c1 in c2	sequencing
+  if v then c1 else c2	conditional
+  v1 v2	application
+  with v handle c	handling
+
+
+
+Language
+Fig. 1. Syntax of terms.
+
+Before we dive into examples of handlers, we need to fix a language in which to work. As the order of evaluation is important when dealing with effects, we split language terms (Figure 1) into inert values and potentially effectful computations, following an approach called ﬁne-grain call-by-value [13]. There are a few things worth mentioning:
+Sequencing In do x → c1 in c2, we first evaluate c1, and once this returns a value, we bind it to x and proceed by c2. If x does not appear in c2, we abbreviate the sequencing to c1; c2.
+Operation calls The call op(v; y. c) passes a parameter value v (e.g. the memory location to be read) to the operation op, and after op performs the effect, its result value (e.g. the contents of the memory location) is bound to y and the evaluation of c, called a continuation, resumes. However, note that encompassing handlers may override this behaviour.
+Generic effects Having an explicit continuation in the call is convenient for the semantics, but less so for a programmer, who just wants to get back the result of an operation. So, instead of a full-blown operation call, we define a function, called a generic effect [18], also labelled as op, which takes a parameter and passes it to an operation call with the trivial continuation:
+
+
+op d=ef
+fun x '→ op(x; y. return y)
+
+Though simpler to use, generic effects are just as expressive because we can recover the operation call op(v; y. c) by evaluating do y → op v in c.
+Language extensions To focus on new constructs, we shall keep our language small, but for examples, we are going to extend its values with integers, primitive
+
+1 The material is based upon work supported by the Air Force Office of Scientific Research, Air Force Materiel Command, USAF under Award No. FA9550-14-1-0096.
+
+arithmetic functions, strings, recursive functions rec fun f x '→ c, the unit () and pairs (v1, v2). Furthermore, we allow patterns in binding constructs (func- tions, handler clauses, operation calls, and sequencing). In particular, we use the pattern  to denote ignored parameters, and a pair pattern (x1, x2) to ex- tract components from a pair. For example, we bind 7 to x and ignore 8 in the application (fun (x, ) '→ 6+ x) (7, 8).
+Separation of values & computations We were a bit lax about the separation of values and computations when writing the last example. Since the addition 6+ x is in fact a double application ((+) 6) x, the first application (+) 6 is already a computation. Thus, it cannot be applied to x because both subterms of an application must be values. Instead, we need to use sequencing and write the example in our restricted syntax as:
+
+(fun (x, ) '→ do f → (+) 6 in f x) (7, 8)
+
+However, this longer form adds little value and makes examples hard to read, so while keeping it in mind, we are going to use the shorter form from now on.
+Conversely, we shall implicitly insert return whenever we use a value where a computation is expected. For example, we shall write fun x '→ fun y '→ (x, y) instead of fun x '→ return (fun y '→ return (x, y)).
+Semantics Observe that each operation call creates a branching point in the eval- uation, with as many branches as there are possible results that can be yielded to the continuation. For example, decide will have two branches, print just one, and read will have infinite many branches: one for each possible input. Thus, we can imagine computations as trees, whose leaves are returned values and branching points are called operations. For an example, see Figure 2.
+
+
+
+print “A”;
+do n → get () in if n < 0 then
+print “B”;
+return −n2
+else
+return n +1 
+
+
+
+
+
+···	print “B”
+
+−4
+
+
+
+
+
+print “B”
+
+−1
+print “A”
+
+get ()
+
+0
+1	2
+
+
+
+
+
+3	··· 
+
+
+
+Fig. 2. A computation and a corresponding tree.
+
+
+In the presence of recursion, some of the leaves of the tree may also be labelled by ⊥ to indicate a divergent computation that does not call any operations. A divergent computation that repeatedly calls operations is represented by a non- well-founded tree. Denotational semantics is further discussed in Section 6.3.
+
+Examples
+We now informally describe the behaviour of handlers through examples. You may also prefer to first take a look at the operational semantics given in Section 3.
+
+Input & output
+Let us start with input & output as it is a very simple algebraic effect, but one which exposes almost all important aspects of handlers. It can be described by two operations: print, which takes a message to be printed and yields the unit value (), and read, which takes a unit value and yields a string that was read. For example, a computation that asks the user for his forename and surname and prints out his full name, is written as:
+
+
+printFullName d=ef
+print “What is your forename?”;
+do forename → read () in print “What is your surname?”; do surname → read () in
+print (join forename surname)
+
+where join is a function that takes two strings and joins them with a space in the middle.
+Constant input
+A simple example of a handler is:
+handler {read(; k) '→ k “Bob”}
+which provides a constant input string “Bob” each time read is called. We can, of course, generalise it to a function that takes a string s and returns a handler that feeds it to read:
+
+
+alwaysRead d=ef
+fun s '→ handler {read(; k) '→ k s}
+
+This handler works as follows: whenever read is called, we ignore its unit parameter and capture its continuation in a function k that expects the resulting string and resumes the evaluation when applied. Next, instead of calling read, we evaluate the computation in the handling clause: we resume the continuation k, but instead of reading the string from interactive input, we yield the constant string s. The handler implicitly continues to handle the continuation, so any read in the handled computation again yields s. If the handled computation calls any operation other than read, the call escapes the handler, but the handler again wraps itself around the continuation so that it may handle any further read calls. For example, evaluating
+with (alwaysRead “Bob”) handle printFullName
+
+first prints out “What is your name?” as print is unhandled. Then, read is handled so “Bob” gets bound to forename. Similarly, the second print is unhandled, and in the second read, “Bob” gets bound to surname as well and finally “Bob Bob” is printed out.
+It is not obvious whether handlers should continue handling operations in the continuation, or handle just the first call. Experience with exception handlers offer us no guidance here, because raised exceptions have no continuation, and so the two choices are equivalent. As it turns out, the first choice, which we are settling on in this paper, has nicer denotational semantics, is what one usually desires in practice, and is perhaps also more intuitive because with h handle c suggests that the whole c should be handled by h. The second choice leads to shallow handlers [10], which are more convenient for certain uses, and can be considered a more elementary approach as they can express the usual handlers through recursion.
+Reversed output
+We can use handlers to not only change what is fed to the continuation, but also to change the way the continuation is used. For example, to reverse the order of printouts, we use:
+
+
+reverse d=ef
+handler {print(s; k) '→ k (); print s}
+
+Here, we handle a print by first calling the continuation, and only after this is finished, print out s. Since the handler wraps itself around k, the same rule applies for the continuation and so all printouts are reversed. So, if we define
+
+
+abc d=ef
+print “A”; print “B”; print “C”
+
+then with reverse handle abc prints out first “C”, then “B”, and finally “A”.
+Collecting output
+A more useful handler is one that collects all printouts into one big string and returns it together with the final value:
+
+
+collect d=ef
+handler {return x '→ return (x, “ ”)
+print(s; k) '→
+do (x, acc) → k () in return (x, join s acc)}
+
+If the handled computation does not print anything and just returns some value x, we need to handle it by returning an empty string in addition to x. But if a computation prints some string s, we resume the continuation. Since this is handled in the same way, it returns the accumulated string acc in addition to the final value x. Now, we only need to join s with acc and return it together with x. If we handle abc with collect, we get a pair ((), “A B C”), where () is the unit result of the last print.
+
+We can also nest handlers, and
+with collect handle (with reverse handle abc)
+evaluates to ((), “C B A”). The order in which we nest the handlers is significant as it is the innermost handler that determines how to first handle the call. If we switch the handlers in the above example, we get ((), “A B C”) because collect handles all print calls, and so none reach the reverse handler, which then does nothing.
+Alternatively, we could implement the same handler using a technique called parameter-passing [22], where we transform the handled computation into a function that passes around a parameter, in our case the accumulated string:
+
+
+collectj d=ef
+handler {return x '→ fun acc '→ return (x, acc)
+print(s; k) '→
+fun acc '→ (k ()) (join acc s)}
+
+When a computation returns a value x, there will be no further printouts, so we can return the given accumulator acc in addition to x. But if print is called, we resume the continuation by yielding it the expected unit result. Since the continuation is further handled into a function, we need to pass k () the new accumulator, which is acc extended with s. To obtain the collected output of a computation c, we apply the resulting function to the empty accumulator as:
+(with collectj handle c)“” 
+In Section 5, we show that collect and collectj indeed exhibit equivalent behaviour. Using parameter-passing, we can also implement a converse handler that feeds words from a given string to the input.
+Exceptions
+Exception handlers are, of course, a special instance of handlers. We represent exceptions with an operation raise that takes an exception argument (e.g. error message) and yields nothing to the continuation (for more details on how this can be enforced, see Example 4.1).
+In practice, exception handlers are rarely reused, but an example of a more general exception handler is:
+
+
+default d=ef
+fun x '→ handler {raise(; ) '→ return x}
+
+which returns a default value x in case the handled computation raises an exception.
+Non-determinism
+Handlers can be used not only to override existing effectful behaviour, but to define new one as well. To implement non-determinism, we take a single operation decide,
+
+which takes a unit parameter, and non-deterministically yields a boolean. Then, a binary choice can be implemented as a function
+
+
+choose d=ef
+fun (x, y) '→
+do b → decide () in
+if b then (return x) else (return y)
+
+However, unlike print, we assume no intrinsic behaviour for decide, and we must use handlers to determine whether to return a fixed result, a random result, an optimal result, or all results. Without an encompassing handler, an application choose (3, 4) is stuck when it encounters the decide call. The simplest handler for decide is
+
+
+pickTrue d=ef
+handler {decide(; k) '→ k true}
+
+which makes each decide yield true to the continuation, so choose always chooses the left argument. So, if we define
+
+
+chooseDiff d=ef
+do x1 → choose (15, 30) in do x2 → choose (5, 10) in return (x1 − x2)
+
+then with pickTrue handle chooseDiff will choose 15 for x1 and 5 for x2, and will thus evaluate to return 10.
+Maximal result
+With handlers, we can also traverse all possible branches to select the maximal result:
+
+pickMax d=ef
+handler {decide(; k) '→
+do xt → k true in do xf → k false in return max (xt, xf )}
+
+In this case, evaluating with pickTrue handle chooseDiff will make the choices needed to get the maximal possible difference 25, even if this means choosing the smaller argument of choose (in particular, we pick 30 for x1 and 5 for x2).
+If we included lists in our language, we could adapt pickMax to a handler pickAll that select all possible results [5]. To do so, the return clause would return a sin- gleton list containing the returned value, while the decide clause would concatenate the lists xt and xf that result from yielding both possible results to the handled continuation.
+Backtracking
+To implement backtracking, where we employ non-deterministic search for a given solution, we add an operation fail to signify that no solution exists.  Then, for
+
+example:
+rec fun chooseInt (m, n) '→
+if m > n then fail () else do b → decide () in
+if b then (return m) else chooseInt (m + 1, n)
+
+is a function that non-deterministically chooses an integer in the interval [m, n], or fails if this interval is empty, while:
+
+
+pythagorean d=ef
+fun (m, n) '→
+do a → chooseInt (m, n − 1) in do b → chooseInt (a + 1, n) in
+
+if isSquare (a2 + b2) then (return (a, b, √a2 + b2)) else fail ()
+
+
+is a function that searches for an integer Pythagorean triple (a, b, c) such that m ≤ a < b ≤ n. We perform backtracking by handling each decide by first trying to yield true, and if this fails, yield false:
+
+
+backtrack d=ef
+handler {decide(; k) '→
+with
+handler {fail(; ) '→ k false} handle
+k true}
+
+
+Then, with backtrack handle pythagorean (m, n) finds (5, 12, 13) for (m, n)= (4, 15) but fails for (m, n) = (7, 10). The exact triple found depends on the implementa- tion of the handler. If, instead, we first tried yielding false, the resulting triple for (m, n)= (4, 15) would be (9, 12, 15). To get a list of all possible triples, we can use the handler pickAll from Section 2.3.1, but extended with a clause that handles fail with an empty list.
+
+State
+We represent state with operations set for setting the state contents, and get for reading them. For simplicity, we assume a single memory location that holds an integer. So, set takes an integer, stores it, and returns a unit result, while get takes a unit parameter, reads the stored integer, and returns it.
+We can use handlers to temporarily alter the stored value or to log all updates. But we can also use them to implement stateful behaviour even if we do not assume a built-in one. Like in Section 2.1.3, we use a parameter-passing handler to pass
+
+around the current state:
+
+
+state d=ef
+handler {get(; k) '→ fun s '→ (k s) s set(s; k) '→ fun  '→ (k ()) s return x '→ fun  '→ return x}
+
+We handle get with a function that takes the current state s and passes it first as a result of get to the continuation, and then again as the unchanged state. Conversely, we handle set by first yielding the unit result, and then applying the handled continuation to the new state s as given in the parameter of get.
+The return clause of state ignores the final state, but if we want to inspect it, we can return it together with the final value by changing the return clause to:
+return x '→ fun s '→ return (s, x)
+Transactions
+In a similar way, we can implement transactional memory, where we commit the changed state only after the handled computation successfully terminated with a value, so in case an exception is raised, the memory contents remain unchanged:
+
+
+transaction d=ef
+handler {get(; k) '→ fun s '→ (k s) s
+set(s; k) '→ fun  '→ (k ()) s
+return x '→ fun s '→ set s; return x}
+
+Operational semantics
+To make the intuition about the behaviour of computations concrete, we now give an operational semantics. The idea behind it is that operation calls do not perform actual effects (e.g. printing to an output device), but behave as signals that prop- agate outwards until they reach a handler with a matching clause. For simplicity, any operation call that escapes all handlers will be treated as a terminating com- putation, i.e. one that does not further reduce. We can assume that actual effectful behaviour is simulated by an outermost handler, or consider one of the approaches listed in Section 6.5.
+Small-step operational semantics is given using a relation c ~ cj, defined in Figure 3. Observe that there is no such relation for values, as these are inert. The rules for conditionals and function application are standard. For sequencing do x → c1 in c2, we start by evaluating c1. If this returns some value v, we bind it to x and evalu- ate c2. But if c1 calls an operation, we propagate the call outwards and defer further evaluation to the continuation of the call, as shown in Figure 4.
+For handling with h handle c, the behaviour is similar. We start by evaluating c, and if it returns a value, we continue by evaluating the return clause of h. If c calls an operation op, there are two options: if h has a matching clause for op, we start evaluating that, passing in the parameter and the handled continuation; if not, we
+
+
+
+
+
+	c1 ~ c′
+do x → c1 in c2 ~ do x → c′ in c2	do x → return v in c ~ c[v/x]
+
+do x → op(v; y. c1) in c2 ~ op(v; y. do x → c1 in c2)	if true then c1 else c2 ~ c1
+
+if false then c1 else c2 ~ c2	(fun x '→c) v ~ c[v/x]
+In the following rules, we set h = handler {return x '→cr , op1(x; k) '→c1,..., opn(x; k) '→cn}:
+c ~ c′
+with h handle c ~ with h handle c′	with h handle (return v) ~ cr [v/x]
+
+with h handle opi(v; y. c) ~ ci[v/x, (fun y '→with h handle c)/k] (1 ≤ i ≤ n)
+
+with h handle op(v; y. c) ~ op(v; y. with h handle c) (op /∈ {op1,..., opn})
+
+Fig. 3. Step relation.
+
+do x1 → (do x2 → op(x; y. c2) in c1) in c ~ do x1 → op(x; y. do x2 → c2 in c1) in c ~ op(x; y. do x1 → (do x2 → c2 in c1) in c)
+
+Fig. 4. The call of op in the innermost sequencing propagates outwards until it reaches the top.
+propagate the call outwards and defer further handling to the continuation, just like in sequencing.
+Type system
+To ensure that the evaluation goes smoothly, we introduce a type and effect system along the lines presented in [4,10]. Just as we split terms into values and compu- tations, we split types into value types and computation types, given in Figure 5.
+
+value type A, B :: = bool	boolean type
+A → C	function type
+C ⇒ D	handler type
+computation type C, D  :: = A !{op1,..., opn}
+
+Fig. 5. Syntax of types.
+
+The value type A → C is given to functions that take a value of type A and perform a computation of type C, while the handler type C ⇒ D is given to handlers that transform computations of type C into ones of type D. Every computation type has the form A ! Δ, where A is the type of values the computation returns, and Δ is the set of operations it possibly calls, i.e. the set Δ is an over-approximation of
+
+the operations that are actually called. Also note that Δ contains no information about the number of occurrences, passed parameters, or order of operations.
+Typing information about operations is given in a signature Σ of the form
+{op1 : A1 → B1,..., opn : An → Bn}
+which assigns a parameter value type Ai and a result value type Bi to each opera- tion opi.
+Example 4.1 Assuming that value types are extended with types int of integers, str of strings, unit, which is given to the unit value (), and the empty type void, the operations we have seen in Section 2 can be assigned the following types:
+print : str → unit read : unit → str raise : str → void decide : unit → bool
+fail : unit → void get : unit → int set : int → unit
+Since there are no values of the void type, a call to raise or fail effectively aborts the continuation, because there are no handlers that could resume it by yielding a suitable value.
+In Figure 6 we define two typing judgements: Γ ▶ v : A for values and Γ ▶ c : C
+for computations. In both, the context Γ is a assignment of value types to variables.
+
+
+
+(x : A) ∈ Γ
+
+		
+Γ ▶ x : A	Γ ▶ true : bool	Γ ▶ false : bool
+Γ,x : A ▶ cr : B ! Δ′
+(opi : Ai → Bi) ∈ Σ	Γ,x : Ai,k : Bi → B ! Δ′ ▶ ci : B ! Δ′
+
+
+
+
+
+
+
+
+1≤i≤n
+Γ,x : A ▶ c : C
+
+
+Γ ▶ fun x '→c : A → C
+
+Δ \ {opi}1≤i≤n ⊆ Δ′
+
+Γ ▶ handler {return x '→cr , op1(x; k) '→c1,..., opn(x; k) '→cn} : A !Δ ⇒ B ! Δ′
+
+
+Γ ▶ v : A
+
+
+Γ ▶ return v : A !Δ 
+(op : Aop → Bop) ∈ Σ	Γ ▶ v : Aop	Γ,y : Bop ▶ c : A !Δ	op ∈ Δ Γ ▶ op(v; y. c): A !Δ 
+
+Γ ▶ c1 : A !Δ	Γ,x : A ▶ c2 : B !Δ 
+Γ ▶ do x → c1 in c2 : B !Δ 
+Γ ▶ v1 : A → C	Γ ▶ v2 : A
+Γ ▶ v1 v2 : C
+
+Γ ▶ v : bool	Γ ▶ c1 : C	Γ ▶ c2 : C
+
+Γ ▶ if v then c1 else c2 : C
+Γ ▶ v : C ⇒ D	Γ ▶ c : C
+
+
+Γ ▶ with v handle c : D
+
+
+
+Fig. 6. Typing judgements.
+
+Typing rules hold no surprises except for:
+
+Return You might expect the conclusion to be Γ ▶ return v : A ! ∅ as that is the most precise type one can assign. However, we give all the rules in a form that allows coarser types because this loses no generality (e.g. in this particular rule, we can set Δ = ∅), is sufficient for our purposes and leads to a simpler type system. See [23] for an algorithm that produces a more precise type.
+Operation call Here similarly, we can assume that although Δ contains op, it can be assigned to the continuation c even when c does not call op.
+Handling According to the above interpretation that C ⇒ D is given to handlers that take computations of type C to ones of type D, it is not surprising that handling behaves like an application of a function.
+Handler To give handler a type A !Δ ⇒ B ! Δj, we need to check that it correctly handles returned values and operations both with and without a matching oper- ation clause. For return values, it is simple: given a value of type A, the return clause must be a computation of type B ! Δj.
+Next, for each handled operation opi : Ai → Bi, the handling clause again needs to be a computation of type B ! Δj. Here, the parameter is expected to have the type Ai as determined by Σ. Similarly, the captured continuation is a function that takes a result of type Bi and performs a computation of type B ! Δj. Notice that even though the handled computation has type A ! Δ, the continuation has a different type because it is further handled.
+Finally, we want to handle computations that call operations without a match- ing operation clause in the handler. For this case, we allow Δ to contain oper- ations not in {opi}1≤i≤n, but any such operation must also appear in Δj as it may also be called in the handled computation (and thus also in continuations of handled operations).
+The given typing system then ensures that well-typed computations do not get stuck [4].
+Theorem 4.2 (Safety) If ▶ c : A !Δ holds, then either:
+c = return v for some ▶ v : A, or
+c = op(v; y. cj) for some op ∈ Δ, or
+c ~ cj for some ▶ cj : A ! Δ.
+Reasoning
+Recall that two terms are observationally equivalent [8] if we may exchange any occurrence of the first with the second without affecting the observable properties of the surrounding program. Due to the separation in the syntax, we define obser- vational equivalence of both computations (c ≡ cj) and values (v ≡ vj). We can show [4] that ≡ is a congruence and that it satisfies a collection of basic equivalences given in Figure 7.
+The main new tool we can use for reasoning about algebraic effects is the induction principle [20,4], which states that for a given predicate φ on computations, φ(c)
+
+
+
+do x → return v in c ≡ c[v/x]	(1)
+do x → op(v; y. c1) in c2 ≡ op(v; y. do x → c1 in c2)	(2)
+do x → c in return x ≡ c	(3)
+do x2 → (do x1 → c1 in c2) in c3 ≡ do x1 → c1 in (do x2 → c2 in c3)	(4)
+if true then c1 else c2 ≡ c1	(5)
+if false then c1 else c2 ≡ c2	(6)
+if v then c[true/x] else c[false/x] ≡ c[v/x]	(7)
+(fun x '→c) v ≡ c[v/x]	(8)
+fun x '→vx ≡ v	(9)
+In the following rules, we have h = handler {return x '→cr , op1(x; k) '→c1,..., opn(x; k) '→cn}:
+with h handle (return v) ≡ cr [v/x]	(10)
+with h handle (opi(v; y. c)) ≡ ci[v/x, (fun y '→with h handle c)/k] (1 ≤ i ≤ n)
+(11)
+with h handle (op(v; y. c)) ≡ op(v; y. with h handle c) (op /∈ {opi}1≤i≤n)	(12)
+with (handler {return x '→c2}) handle c1 ≡ do x → c1 in c2	(13)
+
+Fig. 7. Basic equivalences.
+
+
+
+holds for all computations c if:
+φ(return v) holds for all values v, and
+φ(op(v; y. cj)) holds for all operations op and parameters v, if we assume that
+φ(cj) holds for all possible results y.
+We can use the induction principle to derive equivalences (3), (4), and (13), but for a more interesting example, let us show that handlers collect and collectj from Section 2.1.3 exhibit equivalent behaviour, in particular:
+
+with collect handle c ≡ do g → (with collectj handle c) in g “” 
+
+To succeed with induction, we need to prove a stronger statement that for any string
+s0, we have
+
+do (x1, s1) → (with collect handle c) in return (x1, join s0 s1) ≡
+do g → (with collectj handle c) in g s0
+
+We recover the desired goal by setting s0 = “ ”. The induction on c goes as follows:
+The base case is trivial: if c = return v, both sides are equal to return (v, s0).
+For the induction step when c = op(v; y. cj), we have two possibilities: either
+
+op /= print, which is again trivial, or op = print, where we show:
+do (x1, s1) → (with collect handle print(s2; . cj)) in return (x1, join s0 s1)
+≡ (11) & (8)
+do (x1, s1) → (
+do (x, acc) → (with collect handle cj) in return (x, join s2 acc)
+) in return (x1, join s0 s1)
+≡ (4)
+do (x, acc) → (with collect handle cj) in do (x1, s1) → (return (x, join s2 acc)) in return (x1, join s0 s1)
+≡ (1)
+do (x, acc) → (with collect handle cj) in return (x, join s0 (join s2 acc))
+≡ (associativity of join)
+do (x, acc) → (with collect handle cj) in return (x, join (join s0 s2) acc)
+≡ (induction hypothesis)
+do f → (with collectj handle cj) in f (join s0 s2)
+≡ (1) & (8)
+do g → return (
+fun acc '→ do f → (with collectj handle cj) in f (join acc s2)
+) in g s0
+≡ (11) & (8)
+do g → (with collectj handle print(s2; . cj)) in g s0
+Further reading
+Call-by-push-value
+Call-by-push-value [12] is an evolved version of the fine-grain call-by-value approach. Though the latter was used in this tutorial as it is closer to the more familiar call- by-value, a significant part of the recent work on algebraic effects uses the former. To compare given operational semantics and effect system to ones done in a call-by- push-value setting, see [10], while for denotational semantics and reasoning, see [22].
+Programming with handlers
+The list of examples in Section 2 is by no means exhaustive. For more involved ex- amples that include multi-threading, delimited continuations, selection functionals, text processing, resource management, efficient backtracking, or logic programming, see [5,10,6,25]. A number of implementations of handlers has also sprung up, either as independent languages [3,14], or as libraries in existing languages [10,6,25]. More recently, a multicore [2] branch of OCaml [1] has started adopting handlers as a way of implementing concurrency primitives.
+
+Denotational semantics
+In the naive setting where operations return only first-order values and there is no recursion, we can interpret each value type A with a set JA), while a computation type JA ! Δ) is interpreted as the set of trees (like ones described in Section 1) with leaves in JA) and nodes corresponding to operations in Δ. Handlers are interpreted as functions between trees, and are defined by structural recursion on the tree of the handled computation, while handling is interpreted by application of such functions. More abstractly, we define a model of Δ to be a set M together with a map opM : JA) × M JB) → M for each operation op : A → B ∈ Δ, while a homomor- phism between models M and N is defined to be a map h : M → N such that (h ◦ opM )(x, k)= opN (x, h ◦ k). It turns out that JA ! Δ) is exactly the free model of Δ over JA), i.e. a model characterized with the following universal property: given any model M of Δ and any map f : JA) → M , there exists a unique homo- morphism h : JA ! Δ) → M that agrees with f on leaves. We can use this universal property to interpret handlers: operation clauses define a model of operations, and the return clause provides a function f that can be extended to a homomorphism. For more detail, see [22]. In the general setting with recursion and higher-order results, we need to switch from sets to domains, but the general idea is the same [4].
+Algebraic theories
+Traditionally, algebraic effects were described not only by a set of operations, but also by an equational theory that captures their properties. For example, nondeter- minism can be represented with a binary operation decide and equations stating its idempotency, commutativity, and associativity [18,9,17]. The benefit of equations is that they validate certain program optimizations [11] and better capture the ef- fectful behaviour of operations. With various extensions of such theories, one can also describe complicated effects such as control-flow jumps [7] even in the absence of handlers, or quantum computation [24].
+However, a lot of computationally interesting handlers (for example backtrack from Section 2.3.2) do not respect these equations and thus cannot receive a ho- momorphic interpretation described above [22]. For this reason, current research on handlers assumes no such equations, but connections exists in both directions: on one hand, we can still apply previous results by assuming a trivial equational theory, and on the other hand, we can use reasoning techniques to recover equations from the behaviour of handlers [4].
+Modelling actual effects
+One can model “real-world” effects with a comodel, which is a set W representing the possible world states together with a map opW : W × JA) → W × JB) for each operation op : A → B ∈ Σ. Thus, when an operation call op(v; y. c) escapes all handlers, we pass the current state w ∈ W and the parameter v to opW and get back the new state and a result, which we assign to y and continue evaluating c. For more details, see [5, Section 4.1], which is based on a more abstract treatment
+
+in [19], where the duality between models and comodels is explained in more detail.
+Acknowledgement
+I want to thank Andrej Bauer and Alex Simpson for their truly helpful feedback.
+
+References
+Ocaml.
+URL http://ocaml.org
+Ocaml multicore branch.
+URL  https://github.com/ocamllabs/ocaml-multicore
+Bauer, A. and M. Pretnar, Eff.
+URL http://www.eff-lang.org
+Bauer, A. and M. Pretnar, An effect system for algebraic effects and handlers, Logical Methods in Computer Science 10 (2014).
+URL  http://dx.doi.org/10.2168/LMCS-10(4:9)2014
+Bauer, A. and M. Pretnar, Programming with algebraic effects and handlers, J. Log. Algebr. Meth. Program. 84 (2015), pp. 108–123.
+URL http://dx.doi.org/10.1016/j.jlamp.2014.02.001
+Brady, E., Programming and reasoning with algebraic effects and dependent types, in: G. Morrisett and
+T. Uustalu, editors, ACM SIGPLAN International Conference on Functional Programming, ICFP’13, Boston, MA, USA - September 25 - 27, 2013 (2013), pp. 133–144.
+URL http://doi.acm.org/10.1145/2500365.2500581
+
+Fiore, M. P. and S. Staton, Substitution, jumps, and algebraic effects, in: T. A. Henzinger and D. Miller, editors, Joint Meeting of the Twenty-Third EACSL Annual Conference on Computer Science Logic (CSL) and the Twenty-Ninth Annual ACM/IEEE Symposium on Logic in Computer Science (LICS), CSL-LICS ’14, Vienna, Austria, July 14 - 18, 2014 (2014), p. 41.
+URL http://doi.acm.org/10.1145/2603088.2603163
+Harper, R., “Practical Foundations for Programming Languages,” Cambridge University Press, 2012.
+Hyland, M., G. D. Plotkin and J. Power, Combining effects: Sum and tensor, Theor. Comput. Sci. 357
+(2006), pp. 70–99.
+URL http://dx.doi.org/10.1016/j.tcs.2006.03.013
+Kammar, O., S. Lindley and N. Oury, Handlers in action, in: G. Morrisett and T. Uustalu, editors,
+ACM SIGPLAN International Conference on Functional Programming, ICFP’13, Boston, MA, USA
+- September 25 - 27, 2013 (2013), pp. 145–158.
+URL http://doi.acm.org/10.1145/2500365.2500590
+
+Kammar, O. and G. D. Plotkin, Algebraic foundations for effect-dependent optimisations, in: J. Field and M. Hicks, editors, Proceedings of the 39th ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages, POPL 2012, Philadelphia, Pennsylvania, USA, January 22-28, 2012 (2012),
+pp. 349–360.
+URL http://doi.acm.org/10.1145/2103656.2103698
+
+Levy, P. B., “Call-By-Push-Value: A Functional/Imperative Synthesis,” Semantics Structures in Computation 2, Springer, 2004.
+Levy, P. B., J. Power and H. Thielecke, Modelling environments in call-by-value programming languages, Inf. Comput. 185 (2003), pp. 182–210.
+URL  http://dx.doi.org/10.1016/S0890-5401(03)00088-9
+McBride, C., Frank.
+URL https://hackage.haskell.org/package/Frank/
+Pierce, B. C., “Types and programming languages,” MIT Press, 2002.
+Plotkin, G. D. and J. Power, Adequacy for algebraic effects, in: F. Honsell and M. Miculan, editors, Foundations of Software Science and Computation Structures, 4th International Conference, FOSSACS 2001 Held as Part of the Joint European Conferences on Theory and Practice of Software, ETAPS 2001 Genova, Italy, April 2-6, 2001, Proceedings, Lecture Notes in Computer Science 2030 (2001), pp. 1–24.
+URL  http://dx.doi.org/10.1007/3-540-45315-6_1
+
+
+Plotkin, G. D. and J. Power, Notions of computation determine monads, in: M. Nielsen and U. Engberg, editors, Foundations of Software Science and Computation Structures, 5th International Conference, FOSSACS 2002. Held as Part of the Joint European Conferences on Theory and Practice of Software, ETAPS 2002 Grenoble, France, April 8-12, 2002, Proceedings, Lecture Notes in Computer Science 2303 (2002), pp. 342–356.
+URL  http://dx.doi.org/10.1007/3-540-45931-6_24
+Plotkin, G. D. and J. Power, Algebraic operations and generic effects, Applied Categorical Structures
+11 (2003), pp. 69–94.
+URL http://dx.doi.org/10.1023/A:1023064908962
+
+Plotkin, G. D. and J. Power, Tensors of comodels and models for operational semantics, Electr. Notes Theor. Comput. Sci. 218 (2008), pp. 295–311.
+URL http://dx.doi.org/10.1016/j.entcs.2008.10.018
+
+Plotkin, G. D. and M. Pretnar, A logic for algebraic effects, in: Proceedings of the Twenty-Third Annual IEEE Symposium on Logic in Computer Science, LICS 2008, 24-27 June 2008, Pittsburgh, PA, USA (2008), pp. 118–129.
+URL http://dx.doi.org/10.1109/LICS.2008.45
+
+Plotkin, G. D. and M. Pretnar, Handlers of algebraic effects, in: G. Castagna, editor, Programming Languages and Systems, 18th European Symposium on Programming, ESOP 2009, Held as Part of the Joint European Conferences on Theory and Practice of Software, ETAPS 2009, York, UK, March 22-29, 2009. Proceedings, Lecture Notes in Computer Science 5502 (2009), pp. 80–94.
+URL  http://dx.doi.org/10.1007/978-3-642-00590-9_7
+Plotkin, G. D. and M. Pretnar, Handling algebraic effects, Logical Methods in Computer Science 9
+(2013).
+URL  http://dx.doi.org/10.2168/LMCS-9(4:23)2013
+Pretnar, M., Inferring algebraic effects, Logical Methods in Computer Science 10 (2014).
+URL  http://dx.doi.org/10.2168/LMCS-10(3:21)2014
+
+Staton, S., Algebraic effects, linearity, and quantum programming languages, in: S. K. Rajamani and D. Walker, editors, Proceedings of the 42nd Annual ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages, POPL 2015, Mumbai, India, January 15-17, 2015 (2015), pp.
+395–406.
+URL http://doi.acm.org/10.1145/2676726.2676999
+
+Wu, N., T. Schrijvers and R. Hinze, Effect handlers in scope, in: W. Swierstra, editor, Proceedings of the 2014 ACM SIGPLAN symposium on Haskell, Gothenburg, Sweden, September 4-5, 2014 (2014),
+pp. 1–12.
+URL http://doi.acm.org/10.1145/2633357.2633358

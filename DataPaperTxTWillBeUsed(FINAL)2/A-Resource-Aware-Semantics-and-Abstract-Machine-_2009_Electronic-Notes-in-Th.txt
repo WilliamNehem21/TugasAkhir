@@ -1,0 +1,606 @@
+
+
+Electronic Notes in Theoretical Computer Science 246 (2009) 167–182
+www.elsevier.com/locate/entcs
+
+A Resource-Aware Semantics and Abstract Machine for a Functional Language with Explicit Deallocation
+Manuel Montenegro2	Ricardo Pen˜a1 ,3	Clara Segura1 ,3
+Departamento de Sistemas Informa´ticos y Computacio´n Universidad Complutense de Madrid
+
+Abstract
+Safe is a first-order eager language with heap regions and unusual facilities such as programmer-controlled destruction and copying of data structures. The regions are disjoint parts of the heap where the compiler may allocate data structures. Thanks to regions, a runtime garbage collector is not needed. The language and its associated type system, guaranteeing that destruction facilities and region management are done in a safe way, have been presented previously.
+In this paper, we start from a high-level big-step operational semantics for Safe, and in a series of semi- formal steps we derive its compilation to an imperative language and imperative abstract machine. Once the memory needs of the machine are known, we enrich the semantics with memory consumption annotations and prove that the enriched semantics is correct with respect to the translation and the abstract machine. All the steps are derived in such a way that it is easy to understand the translation and to formally establish its correctness.
+Keywords: Functional languages, Region based heaps, Abstract machines, Code generation.
+
+
+Introduction
+Safe is a first-order eager functional language with facilities for programmer- controlled destruction and copying of data structures. It provides also regions,
+i.e. disjoint parts of the heap where the compiler allocates data structures. The allocation and deallocation of such regions are associated with function applica- tions. The Safe language and a sharing analysis for it were published in [11]. We
+also defined a type system and a type inference algorithm [10,9] guaranteeing that
+destruction facilities and region management are done in a safe way.
+
+1 Partially supported by the Madrid Region Government under grant S-0505/TIC/0407 (PROMESAS).
+2 Email: montenegro@fdi.ucm.es . Work supported by the MEC FPU grant AP2006-02154.
+3 Email: ricardo@sip.ucm.es, csegura@sip.ucm.es
+
+1571-0661 © 2009 Elsevier B.V. Open access under CC BY-NC-ND license.
+doi:10.1016/j.entcs.2009.07.021
+
+Apparently, the language is impure as cell and region destruction, if used without rectrictions, is a (very dangerous) side-effect. But if we consider only those programs accepted by such a type system, then the language is pure and side-effects free.
+In this paper we derive an imperative machine from a high-level big-step opera- tional semantics and give the function that translates Safe programs to imperative code for that machine. The derivation is achieved by incremental refinements across
+a small-step operational semantics and an intermediate abstract machine.
+Once the memory needs of the machine are known, we enrich the semantics with memory consumption annotations and prove that the translation and the abstract machine are correct with respect to the enriched semantics.
+We have also implemented a further code generation phase from the last machine presented here (called SVM) to bytecode of the Java Virtual Machine. Safe is part of a Proof Carrying Code project and the aim is producing this bytecode together
+with a formal certificate. In our case, the certificate will prove that the execution of the code is free from dangling pointers.
+In Section 2 we give a brief description of the language. Sections 3 and 4 re- spectively describe a big-step operational semantics and an equivalent small-step operational semantics. Section 5 describes an abstract machine, called SAFE-M2, where a stack of continuations is used. Section 6 presents the imperative machine
+SVM, and Section 7 the translation schemes from Safe to imperative code. A de-
+tailed example is given, where efficient tail recursion is apparent. In Section 8 we
+provide the enriched big-step semantics and a proof that its resource annotations reflect the real consumptions done by the translated program. Finally, in Section 9 we survey some related work and conclude.
+
+Summary of Safe
+Safe is a first-order polymorphic functional language whose syntax is similar to that of (first-order) Haskell or ML, and has some facilities to manage memory. The memory model is based on heap regions where data structures are built. However,
+in Full-Safe in which programs are written, regions are implicit. These are inferred when Full-Safe is desugared into Core-Safe [8]. As the semantics presented in this paper are defined at Core-Safe level, we describe it in detail.
+The allocation and deallocation of regions is bound to function calls: a working region is allocated when entering the call and deallocated when exiting it. Inside the function, data structures may be built but they can also be destroyed by using a destructive pattern matching denoted by ! or a case! expression, which deallocates the cell corresponding to the outermost constructor. Using recursion, the recursive portions of the whole data structure may be deallocated. We say that it is con-
+demned. As an example, we show in Full-Safe an append function destroying the
+first list’s spine, while keeping its elements in order to build the result:
+concatD []!	ys  = ys
+concatD (x:xs)! ys  = x : concatD xs ys
+As a consequence, appending needs constant heap space, while the usual version
+
+needs linear heap space. The fact that the first list is lost is reflected in the type of the function: concatD ::  [a]!  -> [a] -> [a].
+The data structures which are not part of the function’s result are built in the local working region, which we call self, and they die when the function terminates. As an example we show a destructive version of the treesort algorithm:
+treesortD :: [Int]! -> [Int] treesortD xs = inorder (mkTreeD xs)
+First, the original list xs is used to build a search tree by applying function mkTreeD (defined below). This tree is then traversed in inorder to produce the sorted list. The tree is not part of the result of the function, so it will be built in the working
+region and will die when the treesortD function returns (in Core-Safe where regions
+are explicit this will be apparent). The original list is destroyed and the destructive
+appending function is used in the traversal so that constant heap space is consumed.
+Function mkTreeD inserts each element of the list in the binary search tree.
+mkTreeD :: [Int]! -> BSTree Int mkTreeD []!	= Empty
+mkTreeD (x:xs)!  = insertD x (mkTreeD xs)
+The function insertD is the destructive version of insertion in a binary search tree. Then mkTreeD exactly consumes the space occupied in the heap by the list. The nondestructive version of this function would consume in the worst case quadratic heap space.
+insertD :: Int -> BSTree Int! -> BSTree Int insertD x Empty! = Node Empty x Empty insertD x (Node lt y rt)!
+| x == y = Node lt! y  rt!
+| x > y  = Node lt! y (insertD x rt)
+| x < y  = Node (insertD x lt) y rt!
+Notice in the first guard, that the cell just destroyed must be built again. When a data structure is condemned its recursive children may subsequently be destroyed or they may be reused as part of the result of the function. We denote the latter with a !, as shown in this function insertD. This is due to safety reasons: a condemned data structure cannot be returned as the result of a function, as it potentially may contain dangling pointers. Reusing turns a condemned data structure into a safe one. The original reference is not accessible any more. So, in the example lt and rt are condemned and they must be reused in order to be part of the result.
+Data structures may also be copied denoted appending @ to a variable. Only the recursive part of the structure is copied, while the elements are shared with the old one. This is useful when we want non-destructive versions of functions based on the destructive ones. For example, we can define treesort xs = treesortD (xs@).
+In Fig. 1 we show the syntax of Core-Safe. A program prog is a sequence of
+possibly recursive polymorphic data and function definitions followed by a main
+expression e using them, whose value is the program result. The abbreviation xin stands for x1 ··· xn. Destructive pattern matching is desugared into case! expres- sions. Constructions are only allowed in let bindings, and atoms are used in function applications, case/case! discriminant, copy and reuse. Regions are explicit in con- structor application and the copy expression. Function definitions have additional region parameters rjl where data structures may be built. In the right hand side
+
+
+	
+prog → data n; dec m; e
+data → data T α n @ ρ m = C  t  nk @ ρ l	{recursive, polymorphic data type}
+dec → f xin @ rjl = e	{recursive, polymorphic function}
+e	→  a	{atom: literal c or variable x}
+| x@r	{copy}
+| x!	{reuse}
+| f ain @ rjl	{function application}
+| let x1 = be in e	{non-recursive, monomorphic}
+| case x of alt n	{read-only case}
+| case! x of alt n	{destructive case}
+alt	→ C xin → e
+be	→  C ain @ r	{constructor application}
+| e
+Fig. 1. Core-Safe language definition
+expression only the rj and its working region self may be used. Functional types include region parameter types.
+Polymorphic algebraic data types are defined through data declarations. Alge- braic types declarations have, after region inference, additional type variables indi- cating the regions where the constructed values of that type are allocated. Region inference also adds region arguments to constructors, forcing the restriction that recursive substructures must live in the same region as their parent. For example, after region inference, trees are represented as follows:
+data BSTree a @ rho = Empty@rho | Node (BSTree a@rho) a (BSTree a@rho) @ rho
+There may be several region parameters when nested types are used: different components of the data structure may live in different regions. In that case the last region variable is the outermost region where the constructed values of this type are allocated. In the following example
+data T a b @ rho1 rho2 = C1 ([a] @ rho1) @ rho2 | C2 b @ rho2
+rho2 is where the constructed values of type T are allocated, while rho1 is where the list of a C1 value is allocated.
+Function splitD is an example of function with several output regions. In order to save space we show here a semi-desugared version with explicit regions. Notice that the resulting tuple and its components may live in different regions:
+splitD :: Int -> [a]!@rho2 -> rho1 -> rho2 -> rho3 -> ([a]@rho1, [a]@rho2)@rho3 splitD 0 zs!	@ r1 r2 r3 = ([]@r1, zs!)@r3
+splitD n []!	@ r1 r2 r3 = ([]@r1, []@r2)@r3 splitD n (y:ys)! @ r1 r2 r3 = ((y:ys1)@r1, ys2)@r3
+where (ys1, ys2) = splitD (n-1) ys @r1 r2 r3
+
+
+Big-step semantics
+In Fig. 2 we show the big-step operational semantics of the core language expres- sions. We use v, vi,... to denote values, i.e. either heap pointers or basic constants, and p, pi, q,... to denote heap pointers. We use a, ai,... to denote atoms, i.e. either program variables or basic constants. The former are denoted by x, xi,... and the latter by c, ci etc. Finally, we use r, ri,... to denote region variables.
+A judgement of the form E ▶ h, k, e ⇓ h', k',v means that expression e is suc-
+
+E ▶ h, k, c ⇓ h, k, c	[Lit ]
+E[x '→ v] ▶ h, k, x ⇓ h, k, v	[Var 1]
+j ≤ k  (h', p')= copy (h, p, j)
+E[x '→ p, r '→ j] ▶ h, k, x@r ⇓ h', k, p' [Var 2]
+fresh(q)
+[Var 3]
+E[x '→ p] ▶ h  [p '→ w], k, x! ⇓ h  [q '→ w], k,q 
+
+(f x n@ r m = e) ∈ Σ
+n	' m	'  '
+
+i	j	[xi '→ E(ai) , rj '→ E(rj ) , self '→ k + 1] ▶ h, k + 1,e ⇓ h ,k + 1,v 
+
+n	' m	'	'
+[App]
+
+E ▶ h, k, f ai @ rj  ⇓ h |k' ,k ,v 
+E ▶ h, k, e1 ⇓ h', k', v1	E ∪ [x1 '→ v1] ▶ h', k', e2 ⇓ h'', k'',v 
+[Let 1]
+E ▶ h, k, let x1 = e1 in e2 ⇓ h'', k'',v 
+j ≤ k	fresh(p)	E ∪ [x1 '→ p] ▶ h  [p '→ (j, C vin)], k, e2 ⇓ h', k',v 
+E[r '→ j, a '→ v n] ▶ h, k, let x = C a n@r in e ⇓ h', k',v	[Let 2]
+i	i	1	i	2
+C = Cr	E ∪ [xri '→ vinr ] ▶ h, k, er ⇓ h', k',v 
+
+E[x '→ p] ▶ h[p '→ (j, C vinr )], k, case x of Ci
+xij
+ni → e m ⇓ h', k',v [Case ]
+
+C = Cr	E ∪ [xri '→ vinr ] ▶ h, k, er ⇓ h', k',v 
+E[x '→ p] ▶ h  [p '→ (j, C v nr )], k, case! x of C x ni → e m ⇓ h', k',v [Case!]
+i	i  ij	i
+
+Fig. 2. Operational semantics of Safe expressions
+
+cessfully reduced to normal form v under runtime environment E and heap h with k + 1 regions, ranging from 0 to k, and that a final heap h' with k' + 1 regions is produced as a side effect. Runtime environments E map program variables to
+values and region variables to actual region identifiers. We adopt the convention that for all E, if c is a constant, E(c)= c.
+A heap h is a finite mapping from fresh variables p (we call them heap point- ers) to construction cells w of the form (j, C vin), meaning that the cell resides in region j. We say that region (w) = j. Actual region identifiers j are just natural numbers. Formal regions appearing in a function body are either region variables r corresponding to formal arguments or the constant self . Deviating from other authors, by h[p '→ w] we denotea heap h where the binding [p '→ w] is highlighted. On the contrary, by h  [p '→ w] we denote the disjoint union of heap h with the binding [p '→ w]. By h |k we denote the heap obtained by deleting from h those bindings living in regions greater than k, and by dom(h), the set {p | [p '→ w] ∈ h}. The semantics of a program is the semantics of the main expression in an envi-
+ronment Σ, which is the set containing all the function and data declarations.
+Rules Lit and Var 1 just say that basic values and heap pointers are normal forms. Rule Var 2 executes a copy expression copying the data structure pointed to by p and living in a region j' into a (possibly different) region j. The runtime system function copy follows the pointers in recursive positions of the structure
+starting at p and creates in region j a copy of all recursive cells. Some restricted type informaton is available in our runtime system so that this function can be implemented. The pointers in non recursive positions are kept identical in the new cells. This implies that both data structures may share some subparts.
+
+In rule Var 3, the binding [p '→ w] in the heap is deleted and a fresh binding [q '→ w] to cell w is added. This action may create dangling pointers in the live heap, as some cells may contain free occurrences of p.
+Rule App shows when a new region is allocated. Notice that the body of the function is executed in a heap with k + 2 regions. The formal identifier self is bound to the newly created region k + 1 so that the function body may create DSs in this region or pass this region as a parameter to other function calls. Before returning
+from the function, all cells created in region k' +1 are deleted. This action is another source of possible dangling pointers.
+Rules Let 1, Let 2, and Case are the usual ones for an eager language, while rule Case ! expresses what happens in a destructive pattern matching: the binding of the discriminant variable disappears from the heap. This action is the last source of possible dangling pointers.
+In the following, we will feel free to write the derivable judgements as E ▶
+h, k, e ⇓ h', k,v because of the following:
+Proposition 3.1 If E ▶ h, k, e ⇓ h', k',v is derivable, then k = k'.
+Proof. Straightforward, by induction on the depth of the derivation.	 
+Proposition 3.2 If e0 is the main expression of a Safe program, and [self '→ 0] ▶
+{}, 0, e0 ⇓ hf , 0, vf is derivable, then in every judgement E ▶ h, k, e ⇓ h', k,v of the derivation E(self )= k holds.
+Proof. The property is true at the initial judgement and is preserved in every inductive rule. The only relevant case is rule App.	 
+
+Small-Step Semantics
+In Figure 3 we show the small-step semantic rules. There are two kinds of judge- ments. The first kind, E, h, k0, k,e −→ h', k0, v, is applied when an expression e is evaluated to a value in one step. These correspond to literals, variables, copy ex- pressions, and reuse expressions. The other kind, E, h, k0, k,e −→ E', h', k0, k', e', covers the remaining cases: function application, let, case and case! expressions. In the configurations, k denotes the highest region available in h, as in the big step semantics. We explain below the meaning of k0.
+Notice that let expressions are marked with a natural number δ and an envi- ronment E. In rule App, the number of available regions is incremented by one, as a new local region is allocated and assigned number k + 1. Additionally, the envi- ronment E is discarded, as in the function body only the arguments and the self region are in scope. However, due to let expressions, a continuation is possible after function application. Then, we need to recover the discarded environment and the original value of k. The environment is kept in the binding and number δ is used to remember the newly created regions during the evaluation of the bound expression, so that the original k can be later recovered. The initial values of δ and E are respectively 0 and ⊥, which we can assume are annotated in the text. Rule Let 4b
+
+
+
+	k ≥ k0	 [Lit ]
+E, h, k0, k,c −→ h |k0 , k0,c 
+	k ≥ k0	 [Var ]
+E[x '→ v], h, k0, k,x −→ h |k , k0,v	1
+k ≥ k0	k ≥ j	(h',q)= copy (h, p, j)
+E[x '→ p, r '→ j], h,k , k, x@r −→ h',k ,q [Var 2]
+0	0
+	k ≥ k0	fresh(q)	
+[Var ]
+E[x '→ p],h  [p '→ w], k0, k, x! −→ h  [q '→ w], k0,q	3
+(f xin@ rjm = e) ∈ Σ
+
+E, h, k , k,f a n@ r' m
+n	' m
+[App]
+
+0	i	j
+−→ [xi '→ E(ai) , rj '→ E(rj )
+j ≤ k  fresh(p)
+, self '→ k + 1], h, k0,k + 1,e 
+
+E[r '→ j, a '→ v n], h,k , k, let x
+[Let 3]
+=⊥ C a n@r in e −→ E ∪ [x '→ p],h  [p '→ (j, C v n)],k , k,e 
+
+i	i	0
+1  0	i	1	i	0
+
+E, h, k, k, e1 −→ h', k, v1
+
+E, h, k , k, let x =⊥ e in e −→ E ∪ [x
+'→ v ], h',k , k,e [Let 4a]
+
+0	1  0  1
+1	1	0
+
+E, h, k, k, e1 −→ E', h', k,k + η, e'
+[Let 4b]
+E, h, k0, k, let x1 =⊥ e1 in e −→ E', h', k0,k + η, let x1 =E e' in e
+0	η  1
+E'' /= ⊥	E, h, k, k + δ, e1 −→ h', k, v1
+
+E, h, k ,k + δ, let x
+=E'' e
+in e −→ E'' ∪ [x
+'→ v ], h',k , k,e [Let 4c]
+
+0	1  δ	1
+1	1	0
+
+E'' /= ⊥	E, h, k, k + δ, e1 −→ E', h', k,k + η, e'
+[Let 4d]
+
+E, h, k ,k + δ, let x
+=E'' e
+in e −→ E', h',k ,k + η, let x
+=E'' e' in e
+
+0	1  δ	1	0	1  η	1
+	C = Cr	 [Case]
+E[x '→ p], h[p '→ (j, C b nr )],k , k, case x of C x ni → e m −→ E ∪ [x  '→ v nr ], h,k , k,e 
+i	0	i  ij	i	ri	i	0	r
+	C = Cr	 [Case !]
+E ∪ [x  '→ v nr ],h ∪ [p '→ (j, C b nr )],k , k, case! x of C x ni → e m −→ E ∪ [x  '→ v nr ]h, k , k,e 
+
+ri	i
+i	0	i  ij	i
+ri	i	0	r
+
+
+Fig. 3. Small-step operational semantics of Safe expressions
+saves the environment for the first time and rule Let 4d updates the information as necessary during the evaluation of the bound expression. In case the evaluation of the bound expression is successful, rules Let 3, Let 4a or Let 4c will be applied to proceed with the evaluation of the main expression.
+Those new regions created during the evaluation of the bound expression cannot contain the result of the evaluation because after function application the local region is deallocated. Region k0 denotes the highest region available when the machine stops reducing the expression. Initially k = k0 = 0. Rule App increments k while rules Lit , Var 1, Var 2 and Var 3 discard all the local regions back to k0.
+This small-step semantics is equivalent to the previously defined big-step seman- tics: for any k and k0 ≤ k, Δ, k,e ⇓ Θ, k,v if and only if Δ, k0, k,e −→∗ Θ, k0, k, v.
+The abstract machine SAFE-M2
+Our next refinement is introducing an abstract machine, called SAFE-M2 because there was a previous one called SAFE-M1 now abandoned. A configuration of the machine is a 7-tuple (h, k0, k, e, E, S, Σ), where h is the heap, k0, k are the region numbers used in the small-step semantics, e is the control expression, E is the
+runtime environment, S is a stack, and Σ is a function giving the code of every defined Safe function. In Figure 4 we show the transitions of the abstract machine
+
+
+
+
+
+
+
+
+
+
+
+n
+
+(h[p '→ (j, C bi )],  k,  k,  x,  E1[x '→ p],  (k0, x1, e,E): S,  Σ)	[Cons 2]
+⇒ (h, k0, k, e, E ∪ [x1 '→ p], S, Σ)
+n
+(h[p '→ (l, C bi )],  k0,  k,  x@r,  E[x '→ p, r '→ j],  S,  Σ)	(h , q)= copy (h, p, j) [Copy ]
+⇒ (h', k0, k, y, E ∪ [y '→ q], S, Σ)	j ≤ k, fresh (y)
+(h  [p '→ w],  k0,  k,  x!,  E[x '→ p],  S,  Σ)	fresh(q), fresh (y)	[Reuse ]
+⇒ (h  [q '→ w], k0, k, y, E ∪ [y '→ q], S, Σ)
+(h, k0, k, f ain @ sjm, E, S, Σ)	(f xin @ rjm = e) ∈ Σ [App]
+n	m
+⇒ (h, k0, k + 1, e, [xi '→ E(ai) , rj '→ E(sj) , self '→ k + 1], S, Σ)
+(h,  k0,  k,  let x1 = C ain@s in e,  E,  S,  Σ)	E(s) ≤ k	[Let 3]
+n
+⇒ (h  [p '→ (E(s),C E(ai) )],  k0, k, e, E  [x1 '→ p],  S,  Σ)	fresh(p)
+(h,  k0,  k,  let x1 = e1 in e,  E,  S,  Σ)	[Let 4]
+⇒ (h,  k,  k,  e1,  E,  (k0, x1, e,E): S,  Σ)
+
+
+
+(h[p '→ (j, C bi )], k0, k, case x of Ci xijni
+n
+→ ei, E[x '→ p], S, Σ)	C = Cr	[Case 1]
+
+⇒ (h, k0, k, er, E ∪ [xrj '→ bj
+n
+],  S,  Σ)
+ni
+
+(h  [p '→ (j, C bi )], k0, k, case! x of Ci xij
+n
+⇒ (h, k0, k, er, E ∪ [xrj '→ bj ], S, Σ)
+→ ei, E[x '→ p], S, Σ)	C = Cr	[Case 2]
+
+
+Fig. 4. The abstract machine SAFE-M2
+SAFE-M2. The only new element w.r.t. the small-step semantics is the stack S. It consists of continuation frames of the form (k0, x1, e, E) corresponding to pending expressions e of a let whose auxiliary expression e1 is under evaluation. Region k0 is where the normal form of e should be returned, x1 is the let-bound variable free in e, and E is the environment in which e should be evaluated. Corresponding to the inductive semantic rules of the Let 4 group, the abstract machine rule Let 4 pushes a continuation to the stack and proceeds with the evaluation of the auxiliary expression e1. When the normal form of e1 is reached in rules Lit1 and Cons 1, the continuation is popped and the machine proceeds with the evaluation of the main expression. We use a, ai,... to denote either program variables or basic constants. Notice that the current environment is discarded in rules Lit 2 and Cons 2 when a normal form is reached and a continuation must be popped from the stack. Also, it is discarded in rule App when a function body is entered and the formal arguments become the only variables in scope. In Section 7 this will have the important conse- quence that tail recursion is translated so that only a constant stack space is needed. Notice also in rule Let 4 that the current environment is saved in the stack but it is
+
+not discarded from the control. One important aspect of the translation given in Section 7 is that it manages to avoid this implicit duplication of environments.
+The current environment is extended with new bindings in rules Let 3, Case1 and Case 2 as soon as let-bound or case-bound variables become free variables in scope in the continuation expression. Also, it is extended in rules Copy and Reuse with a fresh program variable y. This is merely an artifact due to the fact that a fresh data structure must be referenced in the control expression. Finally, in rules Lit 2 and Cons 2, the environment E saved in the continuation must be extended with the new binding introduced by let.
+
+The imperative abstract machine SVM
+We first present our imperative machine and then, in Sec. 7, we will explain how to map M2 to it. A configuration of the machine SVM (Safe Virtual Machine) consists of the six components (is, h, k0, k, S, cs), where is is the current instruction
+sequence, and cs is the code store where the instruction sequences resulting from the compilation of program fragments are kept. Now, we will use p, q,... to denote code pointers solved by cs, and b, bi,... to denote heap pointers or any other item stored in the stack (constants, region numbers or continuations). In Figure 5 we show the semantics of SVM instructions in terms of configuration transitions. By Cm we denote the data constructor which is the r-th in its data definition out of a total of m data constructors. By S!j we denote the j-th element of the stack S counting from the top and starting at 0 (i.e. S!0 is the top element).
+Instruction DECREGION deletes from the heap all the regions, if any, between the current region k and region k0, excluding the latter. It will be used when a normal form is reached.
+Instruction POPCONT pops a continuation from the stack or stops the exe- cution if there is none. Notice that b —which will usually be a value— is left in the stack so that it can be accessed by the continuation. Instruction PUSHCONT pushes a continuation. It will be used in the translation of a let.
+Instructions COPY and REUSE just mimic the corresponding actions Copy and Reuse of the abstract machine M2. Instruction CALL jumps to a new instruction sequence and creates a new region. Instruction PRIMOP operates two basic values located in the stack and replaces them by the result of the operation.
+Instruction MATCH does a vectored jump depending on the constructor of the matched closure. The vector of sequences pointed to by the pj corresponds to the compilation of a set of case alternatives. Instruction MATCH ! additionally destroys the matched cell.
+Instruction BUILDENV receives a list of keys Ki and creates a portion of en- vironment on top of the stack: If a key K is a natural number j, the item S!j is copied and pushed on the stack; if it is a basic constant c, it is directly pushed on the stack; if it is the identifier self , then the current region number k is pushed on the stack. Instruction BUILDCLS allocates fresh memory and constructs a heap value. As BUILDENV , it receives a list of keys and uses the same conventions. It
+
+
+Initial/final configuration	Condition
+(DECREGION : is,  h,  k0,  k,  S, cs)	k ≥ k0
+⇒ (is, h |k0 , k0, k0, S, cs)
+([POPCONT ], h, k, k, b : (k0, p): S, cs[p '→ is])
+⇒ (is, h, k0, k, b : S, cs)
+(PUSHCONT p : is,  h,  k0,  k,  S, cs[p '→ is'])
+⇒ (is, h, k, k, (k0, p): S, cs)
+(COPY : is, h[b '→ (l, C vin)], k0, k, b : j : S, cs)	(h', b')= copy (h, b, j)
+⇒ (is,  h',  k0,  k,  b' : S,  cs)	j ≤ k
+(REUSE : is, h  [b '→ w], k0, k, b : S, cs)	fresh(b')
+⇒ (is, h  [b' '→ w], k0, k, b' : S, cs)
+([CALL p],  h,  k0,  k,  S,  cs[p '→ is])
+⇒ (is, h, k0, k + 1, S, cs)
+(PRIMOP ⊕ : is,  h,  k0,  k,  c1 : c2 : S,  cs)	c = c1 ⊕ c2
+⇒ (is, h, k0, k, c : S, cs)
+([MATCH l pjm], h[S!l '→ (j, Cm vin)], k , k, S, cs[pj '→ isjm])
+
+n
+⇒ (isr,  h,  k0,  k,  bi
+r	0
+: S,  cs)
+
+([MATCH ! l pjm], h  [S!l '→ (j, Cm vin)], k0, k, S, cs[pj '→ isjm])
+
+n
+
+⇒ (isr,  h,  k0,  k,  bi
+r
+: S,  cs)
+
+(BUILDENV K n : is,  h,  k ,  k,  S,  cs)
+i	n 0
+⇒ (is,  h,  k0,  k,  Itemk(Ki) : S,  cs)	(1)
+(BUILDCLS Cm K n K : is,  h,  k ,  k,  S,  cs)	Item (K) ≤ k, fresh(b)
+r	i		0		k
+n
+⇒ (is,  h  [b '→ (Itemk(K),Cm Itemk(Ki) )],  k0,  k,  b : S,  cs)	(1)
+(SLIDE m n : is,  h,  k ,  k,  b m : b'n : S,  cs)
+
+m
+⇒ (is, h, k0, k, bi
+0	i	i
+: S,  cs)
+
+⎧ S!j  if K = j ∈ N
+(1) Itemk(K) d=ef	c	if K = c
+⎪⎪⎩ k	if K = self
+
+Fig. 5. The abstract machine SVM
+also receives the constructor Cm of the value.
+Finally, instruction SLIDE removes some parts of the stack. It will be used to remove environments when they are no longer needed.
+
+Translation to imperative code
+The main new idea of the translation is to split the runtime environment of the M2 machine into two environments: a compile-time environment ρ mapping program variables to natural numbers, and the actual runtime environment mapping offsets from the top of the stack to actual heap pointers, basic constants or region numbers.
+
+The ρ environment maps a variable to the position in the stack where its runtime value resides. As the stack grows dynamically, a first idea is to assign numbers to the variables from the bottom of the environment to the top. In this way, if the environment occupies the top m positions of the stack and ρ[x '→ 1], then S!(m − 1) will contain the runtime value corresponding to x.
+A second idea is to reuse the current environment when pushing a continuation into the stack. In the M2 rule Let 4, the environment E pushed into the stack is the same as the environment in which the auxiliary expression e1 is evaluated. The aim is to share the environment instead of duplicating it, and to push only the remaining parameters in the continuation, i.e. the pair (k0, e) (the variable x1 will not in fact be needed, but the compilation will ensure that a pointer to its value will be on top of the stack when the continuation is popped). So, the whole environment ρ will consist of a list of smaller environments [δ1,... , δn], each one except the first one δ1, topped with a continuation. Each individual block i consists of a triple (δi, li, ni) with the actual environment δi mapping variables to numbers in the range (1 ... mi), its length li = mi + ni, and an indicator ni whose value is 2 for all the blocks except for the first one, whose value is n1 = 0. We are assuming that a continuation needs two words in the stack and that the remaining items need one word.
+The offset with respect to the top of the stack of a variable x defined in the
+def Σk	i	k
+Only the top environment may be extended with new bindings. There are three
+operations on compile-time environments:
+
+((δ, m, 0) : ρ)+ {xi '→ ji
+n  def
+
+} = (δ ∪ {xi '→ m + ji
+n,m + n, 0) : ρ.
+
+((δ, m, 0) : ρ)++ d=ef ({}, 0, 0) : (δ, m + 2, 2) : ρ.
+topDepth ((δ, m, 0) : ρ) d=ef m. Undefined otherwise.
+The first one extends the top environment with n new bindings, while the second closes the top environment with a 2-indicator and then opens a new one.
+Using these conventions, in Figure 6 we show the translation function trE taking a Core-Safe expression and giving a list of SVM instructions and a code store. There, NormalForm ρ is a compilation macro defined as follows:
+def
+= SLIDE 1 (topDepth ρ);
+DECREGION ;
+POPCONT
+Notice in function applications that the translation of the body is expected to be found in the code store. This is denoted by highlighting address p.
+
+Efficient tail recursion: an example
+We show here a detailed example, a tail recursive version of the factorial function:
+ifact n r = case n of
+0 → r
+→ let r' = r ∗ n in (let n' = n − 1 in ifact n' r');
+ifact 31 
+
+trE c ρ	= BUILDENV [c];
+NormalForm ρ
+trE x ρ	= BUILDENV [ρ x];
+NormalForm ρ
+trE (x@r) ρ	= BUILDENV [ρ x, ρ r];
+COPY ;
+NormalForm ρ
+trE (x!) ρ	= BUILDENV [ρ x];
+REUSE ;
+NormalForm ρ
+trE (a1 ⊕ a2) ρ	= BUILDENV [ρ a1,ρ a2];
+PRIMOP ;
+NormalForm ρ
+trE (f ain @ sjm) ρ	= BUILDENV [ρ ain, ρ sjm]; SLIDE (n + m) (topDepth ρ); CALL p
+where (f xin @ rjm = e) ∈ Σ
+cs[p '→ trE e [({ rj '→ m − j + 1m, xi '→ n − i + m + 1n},n + m, 0)]]
+
+trE (let x
+= Cm a n@s in e) ρ = BUILDCLS Cm	n
+
+
+
+1	l	i
+l  [(ρ ai) ] (ρ s);
+trE e (ρ + {x1 '→ 1})
+
+trE (let x1 = e1 in e) ρ	= PUSHCONT p;	& cs ∪ [p '→ trE e (ρ + {x1 '→ 1})]
+trE e1 ρ++
+n	n
+	
+
+trE (case x of alt i ) ρ	= MATCH (ρ x) pi	& cs ∪ [pi '→ trA alt i ρ ]
+n	n
+trE (case! x of alt i ) ρ	= MATCH ! (ρ x) pi & cs ∪ [pi '→ trA alt i ρ ]
+trA (C xin → e) ρ	= trE e (ρ + {xi '→ n − i + 1n})
+Fig. 6. Translation schemes from normalized Safe to SVM instructions
+In Figure 7 we show both the corresponding imperative code and an outline of executing ifact 3 1. We show, from top to bottom and from left to right, the state of the stack after executing some of the instructions (written above the stack).
+It is possible to visualize how tail recursion is efficiently done by means of the SLIDE 2 4 instruction which discards the previous (already dead) environment. The stack’s depth is the same at each recursive call (second, third and fourth columns).
+
+Resource-aware semantics
+Once the resource consumption of the SVM is known, we enrich the semantics given in Sec. 3 with a resource vector (δ, m, s) obtained as a side effect of evaluating an expression e. The first component is a partial function δ : N → Z giving for each region k the signed difference between the cells in the final and initial heaps. A positive difference means that new cells have been created in this region. A negative one, means that some cells have been destroyed. By dom(δ) we denote the subset of N in which δ is defined. By |δ| we mean the sum  n∈dom (δ) δ(n) giving
+the total balance of cells. The remaining components m and s respectively give
+the minimum number of fresh cells in the heap and of words in the stack needed to successfully evaluate e. When e is the main expression, these figures give us the total memory needs of the Safe program. In Fig. 8, we show the enriched rules. Notice
+the additional argument td needed to simulate the topDepth function of compile
+
+P5 +1 
+P5 +1 
+P5 +1 
+
+
+
+n
+BUILDENV [Lit 3, Lit 1]	P3
+SLIDE 2 0	n
+CALL ifact	0
+n1	n2
+
+ifact : MATCH 0 [P ,P ]
+r0	r'	r'	r'
+
+3  4	1	2
+
+P3 :	BUILDENV [Var 1] SLIDE 1 2 DECREGION POPCONT
+P4 :	PUSHCONT P5 BUILDENV [Var 2, Var 1] PRIMOP *
+n0
+P4 +1	r0
+
+r
+P6
+n
+n'
+n1	n2
+r1	r2	P3
+
+r
+P6	P6	n3
+'	'	r3
+1	2
+
+SLIDE 1 0 
+POPCONT
+P5 :	PUSHCONT P6 BUILDENV [Var 2, Lit 1] PRIMOP -
+SLIDE 1 0 
+POPCONT
+n0	r'
+r0	n'
+r'
+P4 +4	n0
+r0
+r'
+'	'
+1	2
+'	'
+1	2
+'	'
+1	2
+n1	n2
+r1	r2
+P3 +2 
+
+r
+
+P6 :	BUILDENV [Var 0, Var 1] n0
+r
+P6 +2 
+P6 +2 
+P6 +2 
+
+SLIDE 2 4 
+CALL ifact
+0
+n1 r1
+
+n2	n3
+r2	r3
+
+
+Fig. 7. Imperative code for ifact 3 1 and example of execution
+time environments. By [ ] we denote the function λn.⊥ and by δ1 + δ2 the function:
+8>< δ1(x)+ δ2(x)	if x ∈ dom (δ1) ∩ dom (δ2)
+
+(δ1 + δ2)(x)= 
+δi(x)	if x ∈ dom (δi) − dom (δ3−i), i ∈ {1, 2}
+>: ⊥	otherwise
+
+Function size in rule Var 2 gives the size of the recursive spine of a data structure:
+
+size(h[p '→ (j, C vin)], p)= 1 +	X
+i∈RecPos(C )
+size(h, vi)
+
+where RecPos returns the recursive parameter positions of a given constructor. In rule App, by δ|k we mean a function like δ but undefined for values greater than
+k. The computation max{n + l, s + n + l − td } of fresh stack words takes into account that the first n + l words are needed to store the actual arguments, then the current environment of length td is discarded, and then the function body is evaluated. In rule Let 1, a continuation (2 words) is stacked before evaluating e1, and this a leaves a value in the stack before evaluating e2. Hence, the computation max{2+ s1, 1+ s2}.
+Now we show that the pair translation-abstract machine is sound and complete with respect this semantics. First, we note that both the semantics and the SVM machine rules are syntax driven, and that their computations are deterministic (up to fresh names generation).
+Definition 8.1 We say that the environment E and the pair (ρ, S) are equivalent, denoted E ≡ (ρ, S), if dom E − {self } = dom ρ, and ∀x ∈ dom ρ. E(x)= S!(ρ x).
+
+
+
+E ▶ h, k, td ,c ⇓ h, k, c, ([ ], 0, 1) [Lit ]
+E[x '→ v] ▶ h, k, td ,x ⇓ h, k, v, ([ ], 0, 1) [Var ]
+j ≤ k (h', p')= copy (h, p, j) m = size(h, p)
+E[x '→ p, r '→ j] ▶ h, k, td , x@r ⇓ h',k, p', ([j '→ m], m, 2) [Var2 ]
+fresh(q)
+E[x '→ p] ▶ h  [p '→ w],k, td , x! ⇓ h  [q '→ w],k,q, ([ ], 0, 1) [Var3 ]
+
+(f x n @ r l = e) ∈ Σ
+n	' l	'
+
+
+i	j	[xi '→ E(ai) , rj '→ E(rj ) , self '→ k + 1] ▶ h, k + 1,n + l, e ⇓ h ,k + 1,v, (δ, m, s)
+l
+[App]
+
+E ▶ h, k, td ,f ain @ r' ⇓ h'|k,k,v, (δ|k , m, max{n + l, s + n + l − td })
+E ▶ h, k, 0, e1 ⇓ h',k, v1, (δ1, m1, s1)
+E ∪ [x1 '→ v1] ▶ h',k, td + 1, e2 ⇓ h'',k,v, (δ2, m2, s2)
+
+E ▶ h, k, td , let x = e
+in e
+⇓ h'',k,v, (δ
+[Let1 ]
++ δ , max{m , |δ | + m }, max{2+ s , 1+ s })
+
+1	1	2	1	2	1  1	2	1	2
+j ≤ k  fresh(p) E ∪ [x1 '→ p] ▶ h  [p '→ (j, C vin)],k, td + 1, e2 ⇓ h',k,v, (δ, m, s)
+E[a '→ v n,r '→ j] ▶ h, k, td , let x = C a n@r in e ⇓ h',k,v, (δ + [j '→ 1],m + 1,s + 1) [Let2 ]
+i	i	1	i	2
+	C = Cr  E ∪ [xr '→ vinr ] ▶ h, k, td + nr, er ⇓ h',k,v, (δ, m, s)
+i	 [Case]
+E[x '→ p] ▶ h[p '→ (j, C v n)],k, td , case x of C x ni → e n ⇓ h',k,v, (δ, m, s + n )
+i	i  ij	i	r
+	C = Cr  E ∪ [xr '→ vinr ] ▶ h, k, td + nr, er ⇓ h',k,v, (δ, m, s)
+i	 [Case!]
+E[x '→ p] ▶ h  [p '→ (j, C v n)],k, td , case! x of C x ni → e n ⇓ h',k,v, (δ + [j '→ −1], max{0,m − 1},s + n )
+i	i  ij	i	r
+
+Fig. 8. Resource-Aware Operational semantics of Safe expressions
+
+Definition 8.2 Given c0 = (is, h, k0, k, S, cs ) and S' a suffix of S, we denote by c0 →∗ ' cn a derivation in which all the stacks in configurations ci are never smaller than S'. Should the top instruction of a configuration create a smaller stack, then the machine would stop at that configuration.
+Definition 8.3 Given c0 = (is, h, k0, k, S, cs ) and c0 →S' ··· →S' cn we call the highest difference in cells between the heaps of the configurations c0,... cn and the heap h the maximum number of fresh cells of the derivation, denoted
+maxFreshCells (c0 →∗ ' cn). Likewise, we could define the maximum number of fresh words created in the stack S, denoted maxFreshWords (c0 →∗ ' cn). Finally, by diff k h h' we denote a function giving for each region in {0,... , k} the signed difference in cells between h' and h.
+Theorem 8.4 For all S, S', E, h, h', td , k0, k, e, v, δ, m, s, ρ, cs , cs', cs'' of their re- spective types, if
+
+then E ▶ h, k, td ,e ⇓ h', k, v, (δ, m, s) if and only if
+c0 ≡ (is, h, k0, k, S, cs'') →∗ ' ([POPCONT ], h' |k0 , k0, k0,v : S', cs'') ≡ cn ∧
+δ = diff k h h' ∧ m = maxFreshCells(c0 →∗ ' cn) ∧ s = maxFreshWords (c0 →∗ ' cn)
+S	S
+
+Proof. By induction on the depth of the ⇓ derivation the (⇒) direction, and by induction on the number of steps of →∗ ' , the (⇐) direction (see [7] for a full proof). 
+
+Conclusions and related work
+The motivation for this work has been to complete the implementation of Safe, whose front-end has been presented in [11,10,9]. One contribution is, in our view, to show a systematic method for refining operational semantics and abstract machines in order to find the way from an abstract view of the language to an efficient
+implementation. Another one, is presenting a semantics enriched with memory costs and proving the correctness of these costs and of the whole translation of Safe to imperative code. This semantics will be the basis for proving correct a memory
+consumption static analysis which we are completing.
+There have been other successful derivations of abstract machines starting from high level descriptions of the semantics. For instance, in [4] and [1] a number of such derivations are done. Well known abstract machines for the λ-calculus such as SECD, Krivine’s, CLS and CAM are derived and proved correct. These papers propose general schemes for achieving this kind of derivations. The differences with the present work are the following:
+They concentrate on the pure λ-calculus and they consider neither sharing nor heaps. Algebraic types, case and let expressions are not considered either.
+In the second paper, the starting point is a denotational meaning of the source language, while here we start from an operational semantics.
+In order to refine their machines they use predefined correct transformations such as closure conversion, transformation into continuation passing style, defunction- alization and inlining.
+They ignore the compilation issues from the source language to machine instruc- tions, and also resource consumption.
+In [5] a broad survey of both abstract and virtual machines for the λ-calculus and for practical functional languages is done. The author presents in detail some well-known and other less known abstract machines. When the machines execute compiled code, also the translation schemes are provided. The aim of the book is to serve as a text for a graduate course and no attempt is done to provide proofs of correctness either of the machines or of the compilation schemes.
+For the first abstract machine M2 we have found inspiration in Sestoft’s deriva- tion of abstract machines for a lazy λ-calculus [12]. For the rest of the derivation, the authors have reported some previous experience in [3], but in that occasion the destination machine was known in advance. The present work represents a ’real’ derivation in the sense that the destination machine has been invented from scratch. For the semantics enriched with a resource vector, we have found inspiration in [2]. Compared to other eager machines such as Landin’s SECD machine [6], it is an added value of our abstract machine that the standard translation yields constant stack space for tail recursion, as we have shown in the example of Section 7.1. For instance, in the G-machine the compiler needs to explicitly identify tail recursion and to do a special translation in this case, i.e. it is considered as an optimization of the code generation phase. The same happens in other compiled virtual machines
+
+such as π-RED.
+Additionally, our SVM machine does not need a garbage collector and all mem- ory allocation/deallocation actions have been implemented in constant time.
+
+References
+M. S. Ager, D. Biernacki, O. Danvy, and J. Midtgaard. A Functional Correspondence between Evaluators and Abstract Machines. In Proceedings of PPDP’03, pages 8–19. ACM Press, 2003.
+D. Aspinall, L. Beringer, M. Hofmann, H.-W. Loidl, and A. Momigliano. A program logic for resources.
+Theoretical Computer Science, 389:411–445, 2007.
+A. de la Encina and R. Pen˜a. From Natural Semantics to C: A Formal Derivarion of two STG Machines.
+Journal of Functional Programming, Cambridge University Press, pages 1–48, 2008. (to appear).
+J. Hannan and D. Miller. From Operational Semantics to Abstract Machines. Mathematical Structures in Computer Science, 2(4):415–459, 1992.
+W. Kluge. Abstract Computing Machines: A Lambda Calculus Perspective. Springer Texts in Theoretical Computer Science, 2005.
+P. Landin. The Mechanical Evaluation of Expressions. Computer Journal, 6(4):308–320, Jan 1964.
+M. Montenegro, R. Pen˜a, and C. Segura. A Resource-Aware Semantics and Abstract Machine for a Functional Language with Explicit Deallocation. Technical report, SIC-7-08, Dpto. de Sistemas Inform´aticos y Computaci´on. Universidad Complutense de Madrid, 2008. Available at http://federwin.sip.ucm.es/sic/investigacion/publicaciones/informes-tecnicos/.
+M. Montenegro, R. Pen˜a, and C. Segura. A Simple Region Inference Algorithm for a First-Order Functional Language. In 9th Symposium on Trends in Functional Programming, TFP’08, pages 194– 208, 2008.
+M. Montenegro, R. Pen˜a, and C. Segura. A Type System for Safe Memory Management and its Proof of Correctness. In 10th International ACM SIGPLAN Symposium on Principles and Practice of Declarative Programming, PPDP’08, pages 152–162. ACM SIGPLAN, 2008.
+M. Montenegro, R. Pen˜a, and C. Segura. An Inference Algorithm for Guaranteeing Safe Destruction. In Pre-Proceedings of 18th International Symposum on Logic-Based Program Synthesis and Transformation, LOPSTR’08, pages 13–27, 2008.
+R. Pen˜a, C. Segura, and M. Montenegro. A Sharing Analysis for SAFE. In Selected Papers of the 7th Symposium on Trends in Functional Programming, TFP’06, pages 109–128. Intellect, 2007.
+P. Sestoft. Deriving a Lazy Abstract Machine. J. of Functional Programming, 7(3):231–264, 1997.

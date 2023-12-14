@@ -1,0 +1,447 @@
+Electronic Notes in Theoretical Computer Science 174 (2007) 7–22	
+www.elsevier.com/locate/entcs
+
+Mothers of Pipelines
+Sava Krsti´c, Robert B. Jones, and John O’Leary 1 ,2
+Strategic CAD Labs, Intel Corporation, Hillsboro, Oregon, USA
+
+Abstract
+We present a method for pipeline verification using SMT solvers. It is based on a non-deterministic “mother pipeline” machine (MOP ) that abstracts the instruction set architecture (ISA). The MOP vs. ISA cor- rectness theorem splits naturally into a large number of simple subgoals. This theorem reduces proving the correctness of a given pipelined implementation of the ISA to verifying that each of its transitions can be modeled as a sequence of MOP state transitions.
+Keywords: Pipeline verification, stuttering simulation, confluence, SMT solvers
+
+
+Introduction
+Proving correctness of microarchitectural processor pipelines (MA) with respect to their instruction set architecture (ISA) amounts to establishing a simulation relation between the behaviors of MA and ISA. There are different ways in the literature to formulate the correctness theorem that relates the steps of the two machines [1], but the complexity of the MA’s step function remains the major impediment to practical verification. The challenge is to find a systematic way to break the verification effort into manageable pieces.
+We propose a solution based on the obvious fact that the execution of any instruction can be seen as a sequence of smaller actions (let us call them mini-steps in this informal overview), and the observation that the mini-steps can be understood at an abstract level, without mentioning any concrete MA. Examples of mini-steps are fetching an instruction, getting an operand from the register file, having an operand forwarded by a previous instruction in the pipeline, writing a result to the register file, and retiring. We introduce an intermediate specification MOP between ISA and MA that describes the execution of each instruction as a sequence of mini- steps. By design, our highly non-deterministic intermediate specification admits a
+
+1 Thanks to Arvind and Jesse Bingham for their comments.
+2 Email: {sava.krstic,robert.b.jones,john.w.oleary}@intel.com
+
+1571-0661 © 2007 Elsevier B.V. Open access under CC BY-NC-ND license.
+doi:10.1016/j.entcs.2006.11.036
+
+broad range of implementations. For example, MOP admits implementations that are out-of-order or not, speculative or not, superscalar or not, etc. This approach allows us to separate the implementation-independent proof obligations that relate ISA to MOP from those that rely upon the details of the MA. This can potentially amortize some of the proof effort over several different designs.
+The concept of parcels, formalizing partially-executed instructions, will be needed for a thorough treatment of mini-steps. We will follow the intuition that from any given state of any MA one can always extract the current state of its ISA compo- nents and infer a queue of parcels currently present in the MA pipeline. In Section 2, we give a precise definition of a transition system MOP whose states are pairs of the form ⟨ISA state, queue of parcels⟩, and whose transitions are mini-steps as described above. Intuitively, it is clear that with a sufficiently complete set of mini- steps we will be able to model any MA step in this transition system as a sequence of mini-steps. Similarly, it should be possible to express any ISA step as a sequence of mini-steps of MOP .
+Figure 1 indicates that correctness of a microarchitecture MA with respect to ISA is implied by correctness results that relate these machines with MOP . In Sec- tion 3, we will prove the crucial MOP vs. ISA correctness property: despite its non- determinism, all MOP executions correspond to ISA executions. The proof rests on the local confluence of MOP —a technique pioneered by Shen and Arvind [15]. We first prove the correspondence in the Burch-Dill style, and then extend it to stuttering bisimulation between bounded MOP and ISA.
+
+
+
+
+¸ ¸ ¸
+.
+.
+, , ,
+¸ ¸ ¸z 
+, , ,˛M OP
+
+_¸,	 I SA
+
+
+
+
+Fig. 1. With transitions that express atomic steps in instruction execution, a mother of pipelines MOP simulates the ISA and its multiple microarchitectural implementations. Simulation `a la Burch-Dill flushing justifies the arrow from MOP to ISA.
+
+
+
+The MA vs. MOP relationship is discussed in Section 4. We will see that all one needs to prove here is a precise form of the simulation mentioned above: there exists an abstraction function that maps MA states to MOP states such that for any two states joined by a MA transition, the corresponding MOP states are joined by a sequence of mini-steps.
+MA vs. MOP vs. ISA correctness theorems systematically reduce to numerous subgoals, suitable for automated SMT solvers (“satisfiability modulo theories”). We used CVC Lite [4] and our initial experience is discussed in Section 5.
+
+MOP Definition
+The MOP definition depends on the ISA and the class of pipelined implementations that we are interested in. The particular MOP described in this section has a simple load-store ISA and can model complex superscalar implementations with out-of-order execution and speculation.
+The Instruction Set Architecture
+
+Fig. 2. ISA instruction classes (left column) and corresponding transitions. The variables dest , src1 , src2 , reg have type Reg, and imm, offset have type Word. For the three opcodes, we have opc1 ∈ {add, sub, mult}, opc2 ∈ {addi, subi, multi}, opc3 ∈ {beqz, bnez, j}.
+
+ISA is a deterministic transition system with system variables pc : IAddr, rf : RF, mem : MEM, imem : IMEM. We assume the types Reg and Word of registers and machine words, so that rf can be viewed as a Reg-indexed array with Word values. Similarly, mem can be viewed as a Word-indexed array with values in Word, while imem is an IAddr-indexed array with values in the type Instr of instructions. Instruc- tions fall into five classes that are identified by the predicates alu reg , alu imm, ld , st , branch. The form of an instruction of each class is given in Figure 2. The figure also shows the ISA transitions—the change-of-state equations defined separately for each instruction class.
+State
+Parcels are records with the following fields:
+instr : Instr⊥	my pc : IAddr⊥	dest , src1 , src2 : Reg⊥
+imm : Word⊥	opc : Opcode⊥	data1 , data2 , res , mem addr : Word⊥
+tkn : bool⊥	next pc : IAddr⊥	wb : {⊥, T}	pc upd : {⊥, , , T}
+The subscript ⊥ to a type indicates the addition of the element ⊥ (“undefined”) to the type. The empty parcel has all fields equal to ⊥. The field wb indicates whether the parcel has written back to the register file (for arithmetic parcels and loads) or to the memory (for stores). Similiarly, pc upd indicates whether the parcel has caused the update of pc. The additional values  and  are to record that the parcel has updated pc peculatively and that it ispredicted.
+
+In addition to the architected state components pc, rf , mem, imem, the state of MOP contains integers head and tail , and a queue of parcels q . The queue is represented by an integer-indexed array with head and tail defining its front and back ends. We write idx j as an abbreviation for the predicate head ≤ j ≤ tail , saying that j is a valid index in q. The jth parcel in q is denoted q.j.
+Transitions
+The transitions of MOP are defined by the rules given in Figure 3. Each rule is a guarded parallel assignment, where DEFN contains local definitions, GUARD is the set of predicates defining the rule’s domain, and ASSIGN are the assignments made when the rule fires. Some rules contain additional predicates and functions, defined next.
+The rule decode requires the predicate decoded p ≡ p.opc /= ⊥ and the function decode that updates the parcel field opc and some of the fields dest , src1 , src2 , imm. This update depends on the instruction class of p.instr , as in the following table.
+
+To specify how a given parcel should receive its data1 and data2 —from the register file or by forwarding—we use the predicates no mrw rj ≡ (S = ∅) and mrw rj k ≡ (S /= ∅Λ max S = k), where S = {k | k < j Λ idx k Λ q.k.dest = r}. The former checks whether the parcel q.j needs forwarding for a given register r and the latter gives the position k of the forwarding parcel (mrw = “most r ecent w rite”).
+The rule write back allows parcels to write back to the register file out-of- order. The parcel q.j can write back assuming (1) it is not mispredicted, and (2) there are no parcels in front of it that write to the same register or that have not fetched an operand from that register. These conditions are expressed by predicates ﬁt j ≡ head <j'≤j ﬁt at j' and valid data upto j ≡ head ≤j'≤j valid data j', where
+ﬁt at j ≡ q.j.my pc = q.(j — 1).next pc /= ⊥
+valid data j ≡ q.j.data1 /= ⊥Λ (alu reg q.j ⇒ q.j.data2 /= ⊥)
+Memory access rules (load and store) enforce in-order execution of loads and stores.  The existence and the location of the most recent memory access parcel are described by predicates mrma (“most r ecent memory access”) and no mrma , analogous to mrw and no mrw above: one has mrma j k when k is the largest valid index such that k < j and q.k is a load or store; and one has no mrma j when no such number k exists. The completion of a parcel’s memory access is formulated by
+ma complete p ≡ (load p Λ p.res /= ⊥) V (store p Λ p.wb = T)
+The next four rules in Figure 3 (with branch in their name) cover the compu-
+
+
+Fig. 3.  MOP transitions.  The rules data2 rf and data2 forward are analogous to data1 rf and
+data1 forward, and are not shown.
+
+tation of the next pc value of a parcel, and the related test of whether the branch is taken and (if so) the computation of the target address. The functions get taken and get target are the same ones used by the ISA.
+The rules pc update and speculate govern the program counter updating. The first is based on the next pc value of the last parcel and implements the regular ISA flow. The second implements practically unconstrained speculative updating of the program counter, specified by an arbitrary branch predict function.
+Note that the status of a speculating branch changes when its next pc value is computed; if the prediction is correct (matches my pc of the next parcel), the change is modeled by rule prediction ok. And if the next pc value turns out wrong, rule squash becomes enabled, effecting removal of all parcels in the shadow of the mispredicted branch.
+Rule retire fires only for parcels that have completed their expected modification of the architected state. The predicate complete p is defined by (p.wb = T) Λ (p.pc upd = T) for non-branches, and by p.pc upd = T for branches.
+MOP Correctness
+We call MOP states with empty queues flushed and consider them the initial states of the MOP transition system. The map γ : s '—→ ⟨s, empty queue⟩ establishes a bijection from ISA states to flushed MOP states.
+Note that MOP simulates ISA: if s and s' are two consecutive ISA states, then there exists a sequence of MOP transitions that leads from γ(s) to γ(s'). The sequence begins with fetch and proceeds depending on the class of the instruction that was fetched, keeping the queue size equal to one until the last transition retire. One can prove with little effort that a requisite sequence from γ(s) to γ(s') can always be found within the set described by the strategy
+fetch ; decode ; (data1 rf [] (data1 rf ; data2 rf )) ;
+(result [] mem addr [] (branch taken ; branch target)) ; [load [] store]; (next pc branch [] next pc nonbranch); pc update ; retire
+For the proof that ISA simulates MOP (Theorem 3.4 below), we use the ap- proach introduced by Shen and Arvind [15].
+A MOP invariant is a property that holds for all states reachable from initial (flushed) states. Local confluence is MOP ’s fundamental invariant.
+Theorem 3.1 Restricted to reachable states, MOP is locally confluent.
+We omit the proof of Theorem 3.1. Note, however, that proof of local confluence breaks down into lemmas—one for each pair of rules. For MOP , most of the cases
+
+are resolved by rule commutation: if m1
+ρ1
+←— m
+ρ2
+—→ m2 (i.e., ρi applies to the
+
+ρ2
+state m and leads from it to mi), then m1 —→
+ρ1
+←— m2, for some m . For
+
+the sake of illustration, we show in Figure 4 three examples when local confluence requires non-trivial resolution. Diagrams 1 and 2 show two ways of resolving the
+
+
+
+  • ¸¸¸
+  • ¸¸¸
+  • ¸¸¸
+
+fetch 
+j ,r¸~ ~, 
+¸pc update
+¸¸vz
+fetch 
+j 
+,r¸~2 ~, 
+¸pc update
+¸¸vz
+retire 
+j ,r¸~ ~, 
+¸data1 forward j
+¸¸vz
+
+¸¸¸	1
+¸¸¸
+ •
+   
+• 	_• 
+(squash t); pc update
+¸¸¸	3
+¸¸¸
+ •
+   
+
+prediction ok head
+¸v z jfe tch
+data1 rf j
+¸v z jre tire
+
+
+Fig. 4. Example non-trivial cases of local confluence
+
+confluence of the rule pair (fetch, pc update). Note that both rules are enabled only when q.tail .pc upd = . Thus, the parcel q.tail must be a branch, and the fetch is speculative. Diagram 1 applies when the speculation goes wrong, Diagram 2 when the fetched parcel is correct. (In Diagram 2, t is the index of the branch at the tail of the original queue.) Diagram 3 shows local confluence for the pair (retire, data1 forward j) when mrw j (q.j.src1 ) head holds.
+The second fundamental property of MOP is related to termination. Even though MOP is not terminating (of course), every infinite run must have an in- finite number of fetches:
+Lemma 3.2 Without the rule fetch, MOP (on reachable states) is terminating and locally confluent.
+Proof. Every MOP rule except fetch either reduces the size of the queue, or makes measurable progress in at least one of the fields of one parcel, while keeping all other fields the same. Measurable progress means going from ⊥ to a non-⊥ value, or, in the case of the pc upd field, going up in the ordering ⊥<  <  < T. This finishes the proof of termination. Local confluence of MOP without fetch follows from a simple analysis of the (omitted) proof of Theorem 3.1.	 
+Let us say that a MOP state is irreducible if none of the rules, except possibly fetch, applies to it. It follows from Lemma 3.2, together with Newman’s Lemma [3], that for every reachable state m there exists a unique irreducible state which can be reached from m using non-fetch rules. This state will be denoted |m|.
+Lemma 3.3 For every reachable state m, the irreducible state |m| is flushed.
+Proof. Suppose the queue of |m| is not empty and let p be its head parcel. We need to consider separately the cases defined by the instruction class of p. All cases being similar, we will give a proof only for one: when p is a conditional branch. Since decode does not apply to it, p must be fully decoded.  Since data1 rf does not apply to p, we must have p.data /= ⊥ (other conditions in the guard of data1 rf are true). Now, since branch taken and branch target do not apply, we can conclude that p.res /= ⊥ and p.tkn /= ⊥. This, together with the fact that next pc branch does not apply, implies p.next pc /= ⊥. Now, if p.pc upd = T, then retire would apply. Thus, we must have p.pc upd /= T. Since pc update does not apply, we must have head /= tail , so the queue has length at least 2. If p.pc upd = , then either squash or prediction ok would apply to the parcel
+p. Thus, p.pc upd is equal to ⊥ or  , and this contradicts the (easily checked)
+
+invariant saying that a parcel with p.pc upd equal to ⊥ or  must be at the tail of the queue.	 
+Define α(m) to be the ISA component of the flushed state |m|. Recall now the function γ defined at the beginning of this section. The functions γ and α map ISA states to MOP states and the other way around. Clearly, α(γ(s)) = s.
+The function α is analogous to the pipeline flushing functions of Burch-Dill [5]. Indeed, we can prove that MOP satisfies the fundamental Burch-Dill correctness property with respect to this flushing function.
+Theorem 3.4 Suppose a MOP transition leads from m to m', and m is reachable. Then α(m')= isa step (α(m)) or α(m')= α(m).
+Proof. We can assume the transition m —→ m' is a fetch; otherwise, we clearly have |m| = |m'|, and so α(m)= α(m'). The proof is by induction on the minimum- length k of a chain of (non-fetch) transitions from m to |m|. If k = 0, then m is flushed, so m = γ(s) for some ISA state s. By the discussion at the beginning of Section 3, the fetch transition m —→ m' is the first in a sequence that, without using any further fetches, leads from γ(s) to γ(s'), where s' = isa step s. It follows that |m'| = |γ(s')|, so α(m')= α(γ(s')) = s', as required.
+
+m   ρ  m 1 	 •  .. . •	 |m |
+
+ ¸,
+m	ρ  m 1
+ •  .. . •	 |m |
+
+fetch
+ σ
+J 
+fetch
+
+J σ
+fetch
+J 
+
+m'	m'
+ m '
+
+Fig. 5. Two cases for the inductive step in the proof of Theorem 3.4
+ρ
+Assume now k > 0 and let m —→ m1 be the first transition in a minimum-length
+chain from m to |m|. Analyzing the proof of Theorem 3.1, one can see that local confluence in the case of the rule pair (fetch, ρ) can be resolved in one of the two ways shown in Figure 5, where σ has no occurrences of fetch. In the first case, we
+have α(m')= α(m1), and in the second case we have α(m')= α(m' ), where m' is
+1	1
+as in Figure 5. In the first case, we have α(m') = α(m1) = α(m). In the second
+case, the proof follows from α(m) = α(m1), α(m') = α(m' ), and the induction hypothesis: α(m' )= α(m1) or α(m' )= isa step(α(m' )).	 
+1	1	1
+Stuttering Equivalence of Bounded MOP and ISA
+We begin with a set of definitions.
+Two transition systems →1 and →2 defined on sets S1, S2 respectively are said to be stuttering equivalent when there exists a relation R ⊂ S1 × S2 that is a stuttering bisimulation. This is to say that both R and its inverse R−1 are stuttering simulations, where the last concept is defined as follows.
+Definition 3.5 Let R and the two transition systems be as in the previous para- graph. We say that execution sequences
+σ1 : a1 →1 a2 →1 a3 →1 ···	σ2 : b1 →2 b2 →2 b3 →2 ··· 
+
+are R-matching if there exist strictly increasing functions f, g : {1, 2, 3,.. .} →
+{1, 2, 3,.. .} such that for every k, i, j one has
+f (k) ≤ i < f (k + 1) Λ g(k) ≤ j < g(k + 1) ⇒ R(ai, bj).
+We say that R is a stuttering simulation from S1 to S2 if for every pair (a1, b1) ∈ R and every execution sequence σ1 that begins with a1, there exists an R-matching sequence σ2 that begins with b1.
+Systems that are stuttering equivalent satisfy the same properties in the tem- poral logic without the next-state operator; see [13] and references therein.
+Let MOPk (k ≥ 1) be the restriction of MOP on the subset of its states for which the queue has length at most k.
+Theorem 3.6 The relation R = {(s, m) | s = α(m)} is a stuttering bisimulation between MOPk and ISA.
+We need three lemmas about occurrences of squash in chains of MOP transi- tions. The first is a refinement of an argument used in the proof of Theorem 3.4.
+Lemma 3.7 Let m and m' be reachable MOP states such that m fetch m'. Let σ be a sequence of rules that lead from m to |m|. If σ contains no occurrence of squash, then α(m')= isa step(α(m)).
+Proof. It is easy to see that σ applies to m' as well. Moreover, one can prove that fetch commutes with all transitions of σ, i.e. fetch ; σ =m σ ; fetch. (See Figure 5, diagram on the right.) Thus,
+α(m')= α(m' σ)= α((m fetch) σ)= α(m (fetch ; σ)) = α(m (σ ; fetch))
+= α((m σ) fetch)= α(|m| fetch)= isa step(α(|m|)) = isa step(α(m))
+
+Lemma 3.8 Suppose σ is a chain of MOP rules that applies to some MOP state. If squash j occurs twice in σ, then between these two occurrences there must be an occurrence of squash j' for some j' < j.
+Proof. Notice a general fact that holds for an arbitrary sequence σ of MOP rules, an arbitrary MOP state m and an arbitrary index j: if σ applies to m and squash j' does not occur in σ for any j' < j, then on the way from m to mσ via σ every field of the parcel m.q.j either makes progress or stays the same.
+Now, write
+σ = σ1 ; squash j ; σ2 ; squash j ; σ3,
+where σ and j are as given in the lemma. Let m' = m (σ1 ; squash j) and m'' = m σ2. Then m'.q.j.pc upd =  and m''.q.j.pc upd = . Since  < , the general fact above implies that for some j' < j, squash j' must occur in σ2.	 
+Let us say that j is safe for m if there is no chain of rules that applies to m and contains squash j' for some j' ≤ j.
+
+Lemma 3.9 Suppose σ is a chain of rules that applies to m and does not involve
+squash j' for any j' ≤ j. Then: if j is safe for m σ, it is safe for m too.
+ρ'	 			 s quash j' 
+m	•	•	•	•	•
+ρ	π'
+J  π	 J 
+m'  •
+Fig. 6. Illustration for proof of Lemma 3.9.
+
+Proof (Sketch) It is no loss of generality to assume that σ is a single rule ρ distinct from squash j' for any j' ≤ j. Assuming that there is a chain μ of rules that starts at m and includes squash j' for some j' ≤ j, we can prove that there exists a chain μ' that starts at m' = mρ and also includes squash j' for some j' ≤ j. See Figure 6, where μ is the chain on the top. The proof is by induction on the number of squash rules in μ and the length of μ. It depends on the case analysis over pairs (ρ, ρ') in the confluence proof (Theorem 3.1) and the form of π, π'.	 
+
+Proof of Theorem 3.6. Part 1: From ISA to MOPk. Given an ISA execution sequence
+σ : s1 —→ s2 —→ s3 —→ ··· 
+and m1 such that s1 = α(m1), we have a chain of MOP transitions m1 —→ · · · —→
+|m1| = γ(s1). Furthermore, for every i there is a path in MOP 1 from γ(si) to γ(si+1), as explained at the beginning of Section 3. Splicing these paths together gives a sequence
+μ : m1 —→∗ γ(s1) —→∗ γ(s2) —→∗ ··· 
+of MOP 1 transitions. In this sequence, α(m) = s1 holds for all states m on the path m1 —→∗ γ(s1). Also, for every i, α(m)= si holds for all states m on the path γ(si−1) —→∗ γ(si), except the first. Thus, μ R-matches σ.
+Part 2: From MOPk to ISA. Let
+μ : m1 —→ m2 —→ m3 —→ ··· 
+be an infinite chain of MOPk-transitions. By Theorem 3.4, in the chain
+σ : α(m1) —→ α(m2) —→ α(m3) —→ ··· 
+we have for every i that either α(mi) —→ α(mi+1) is an ISA transition, or α(mi+1)= 
+α(mi) holds. We need to show that the first case occurs infinitely often.
+Since MOP without fetch is terminating, the rule fetch must be used in in- finitely many transitions mi —→ mi+1 in μ. We claim that retire must also be used in infinitely many transitions in μ. Suppose the claim is not true; then there exists h and i0 such that mi.head = h and mi.tail ≤ h + k, for all i ≥ i0. Since retire and squash are the only rules that decrease the queue size, to compensate
+
+for the infinitely many fetch’s, there must be infinitely many squash transitions in μ. More precisely, it follows that for some j such that h ≤ j ≤ h + k, there are infinitely many transitions squash j in μ. However, Lemma 3.8 easily implies that any chain of MOP rules applicable to a MOP state may contain only finitely many occurrences of squash j for any particular j. The contradiction finishes the proof that μ contains infinitely many occurrences of retire.
+Now we know that the (non-decreasing) sequence m1.head , m2.head , m3.head ,... is unbounded. Consequently, for any given l, there are only finitely many i such that mi.tail ≤ l. (Note that the sequence m1.tail , m2.tail , m3.tail ,... is unbounded,
+but not necessarily monotonic because of uses of squash.) Let then ˆl denote the
+largest i such that mi.tail = l. Clearly, the transition mˆl —→ mˆl+1 must be a fetch
+for every l.
+Fix l. Let l' be any index such that ml' .head > ˆl and let σ denote the subchain of μ leading from mˆl to ml' . Note that squash j for j ≤ l cannot occur in σ because that would violate the maximality condition on ˆl. Note also that ml' is safe for any
+j such that j ≤ l, as a consequence of l < ml' .head . By Lemma 3.9, mˆl is safe for any j ≤ l = mˆl.tail . This implies that no squash rule can occur in a (fetch-free) reduction sequence mˆl —→∗ |mˆl|. By Lemma 3.7, we have α(mˆl+1)= α(mˆl fetch)= isa step(α(mˆl)).
+Simulating Microarchitectures in MOP
+Suppose MA is a microarchitecture purportedly implementing the ISA. We will say that a state-to-state map β from MA to MOP is a MOP-simulation if for every MA transition s —→MA s', the state β(s') is reachable in MOP from β(s). Existence of a MOP -simulation proves (the safety part of) the correctness of MA. Indeed, for every
+execution sequence s1 —→MA s2 —→MA ... , we have β(s1) —→+	β(s2) —→+
+
+.. ., and then by Theorem 3.4, α(β(s1)) —→∗
+α(β(s2)) —→∗
+.. ., demonstrating
+
+the crucial simulation relation between MA and ISA.
+For a given MA, the MOP -simulation function β should be easy to guess. The difficult part is to verify that it satisfies the required property: the existence of
+a chain of MOP transitions β(s) —→+	β(s') for each transition s —→MA s'.
+Somewhat simplistically, this verification task can be partitioned as follows.
+Suppose MA’s state variables are v1,... , vn. (Among them are the ISA state variables, of course.) The MA transition function
+s = ⟨v1,... , vn⟩ '—→ s' = ⟨v' ,... , v' ⟩
+1	n
+is given by n functions next vi such that v' = next vi ⟨v1,... , vn⟩. The n-step se- quence s = s0 ~ s1 ~ ... ~ sn−1 ~ sn = s' where si = ⟨v' ,... , v', vi+1,... , vn⟩
+1	i
+conveniently serializes the parallel computation that MA does when it makes a
+transition from s to s'. These n steps are not MA transitions themselves since the intermediate si need not be legitimate MA states at all. However, it is reasonable to expect that the progress described by this sequence is reflected in MOP by actual
+
+transitions:
+
+
+β(s)= m0 —→∗
+
+
+m1 —→∗
+
+
+... —→∗
+
+
+mn = β(s').	(1)
+
+Defining the intermediate MOP states mi will usually be straightforward. Once they have been identified, the task of proving that β(s') is reachable from β(s) is broken down into n tasks of proving that mi+1 is reachable from mi. Effectively, the correctness of the MA next-state function is reduced to proving a correctness property for each state component update function next vi.
+
+Mechanization
+Our method is intended to be used with a combination of interactive (or manual) and automated theorem proving. The correctness of the MOP system (Theorem 3.4) rests largely on its local confluence (Theorem 3.1), which is naturally and easily split into a large number of cases that can be individually verified by an automated SMT solver. The solver needs decision procedures for uninterpreted functions, a fragment of arithmetic, and common datatypes auch as arrays, records and enumeration types. Once the MA-simulation function β of Section 4 has been defined and the intermediate MOP states mi in the chain (1) identified, it should also be possible to generate the proof of reachability of mi+1 from mi with the aid of the same solver. We have used manual proof decomposition and CVC Lite to implement the proof procedure just described. Our models for ISA, MOP , and MA are all written in
+the reflective general-purpose functional language reFLect [7]. In this convenient
+framework we can execute specifications and—through a HOL-like theorem prover on top of reFLect or an integrated CVC Lite—formally reason about them at the same time. Local confluence of MOP is (to some extent automatically) reduced to
+about 400 goals, which are individually proved with CVC Lite. For MA we used the textbook DLX model [9] and proved it is simulated in MOP by constructing the chains (1) and verifying them with CVC Lite. This proof is sketched in some detail below.
+Mechanization of our method is still in progress. Clean and efficient use of SMT solvers to prove properties of executable high-level models written in another language comes with challenges, some of which were discussed in [8]. For us, partic- ularly exigent is the demand for heuristics for deciding when to expand occurrences of function symbols in goals passed to the SMT solver with the functions’ definitions, and when to treat them as uninterpreted.
+Simulating DLX in MOP
+To illustrate the the ideas given in Section 5, we use a simple five-stage pipelined processor based on DLX [9]. Its states are 7-tuples s = ⟨p1, p2, p3, p4, pc, rf , mem⟩, where the pi are the pipeline registers and the rest is the architected state. The DLX next-state function is briefly explained in Figure 7; for more details, see [9].
+It is straightforward to associate a MOP parcel to each valid (non-bubble)
+
+
+
+,,,
+,,,
+,r¸~5~ , ,
+,,
+
+
+
+,r¸~4~ , ,
+,,
+
+
+
+,r¸~3 ~, ,
+,,
+
+
+
+,r¸~2~ , ,
+,,
+
+
+
+,r¸~1~ , ,
+,,,
+
+
+
+,r¸~6~ , ,
+,,
+
+
+
+,r¸~3~ , ,
+,,
+
+
+
+,r¸~2~ , ,
+,,
+
+
+
+,r¸~1 ~, ,
+,,,
+
+
+
+,r¸~3~ , ,
+,,
+
+
+
+,r¸~2 ~, ,
+,,
+
+
+
+,r¸~1~ , ,
+,,,
+
+(z(z(z(z,
+(z
+(z(z(z,
+(z
+J  (z(z,
+(z
+
+
+(a)	(b)	(c)
+Fig. 7. Dynamics of DLX . (a) In a regular cycle, the DLX step can be seen as a sequence of five actions:
+(1) parcel p4 writes back and retires; (2) p3 performs memory access; (3) alu computes the result of p2 or the address for its memory access; (4) p1 receives data from the register file or by forwarding, and if it a branch, its target is computed as well as whether the branch is taken or not; (5) a new parcel p' is fetched and pc is incremented. (b) If p1 is a taken branch, action (4) is modified to include updating the pc with the computed target (becoming action (6) in the picture), and no parcels are fetched. (c) The machine stalls one cycle if p2 is a load and p1 depends on it.
+
+
+m0 = ⟨p4p3p2p1, pc, rf , mem ⟩
+,r¸~1 ~, WB RET
+J  '
+m1 = ⟨p3p2p1, pc, rf , mem ⟩
+,r¸~2 ~, LD ST
+'	J  '	'
+m2 = ⟨p4 p2p1, pc, rf , mem ⟩
+,r¸~3 ~, ALU
+'  '	J  '	'
+m3 = ⟨p4 p3p1, pc, rf ¸, mem ⟩
+
+,r¸~4 ~, 
+
+
+DATA
+¸¸¸¸¸¸
+,r¸~6 ~,    ¸¸¸¸¸¸¸¸
+
+'  '  ' J  '	'	z'  ' '	'	'	'
+
+m4 = ⟨p4 p3p2, pc, rf , mem ⟩
+,r¸~5 ~, FETCH PC
+m6 = ⟨p4 p3p2, pc , rf , mem ⟩
+
+'  '  '  ' J '	'	'
+m5 = ⟨p4 p3p2p1, pc , rf , mem ⟩
+
+retire	if store p4 V branch p4
+write back1 ; retire  if alu reg p4 V alu immed p4 V load p4
+load1	if load p3
+store1  if store p3
+result2  if alu reg p2 V alu immed p2
+mar2	if load p2 V store p2
+( data13 ; data23	if alu reg p1 V store p1
+
+DATA PC = branch data3 ; next pc branch3 ; pc update3  if branch p1
+j fetch ; decode4 ; speculate	if branch p'
+
+Fig. 8. Simulation of DLX in MOP. The MOP state m0 is β(s), where s is an arbitrary DLX state. If s' is the next DLX state, then β(s') is either m5, m6, or m3, depending whether we are in the case (a), (b), or (c) in Figure 7. The figure shows the sequence of MOP steps that go from β(s) to β(s') in all cases.
+The “rule” data13 is either data1 rf3 or data1 forward3, depending on whether the parcel p1 depends on the parcels p2, p3 or not (similarly for data23). The “rule” branch data3 is an abbreviation for data3 ; branch taken3 ; branch target3 .
+
+value of a DLX pipeline register. Combining the resulting parcels into a MOP queue and copying the ISA state, we can define the simulation function β that maps DLX states to MOP states. If s is as above, then β(s) can be written as
+⟨p˜4p˜3p˜2p˜1, pc, rf , mem⟩, where p˜4p˜3p˜2p˜1 denotes the MOP queue corresponding to the contents of the pipeline registers (p1, p2, p3, p4), with the proviso that p˜i is ab- sent if pi is a bubble. Figure 8 sketches the proof that β is a legitimate simulation function. (To avoid clutter, we dropped the tildes from all MOP parcels.)
+
+Related Work
+The idea of flushing a pipeline automatically was introduced in a seminal paper by Burch and Dill [5]. In the original approach, all in-flight instructions in the implementation state are flushed out of the pipeline by inserting bubbles—NOPs that do not affect the program counter. Pipelines that use a combination of super- scalar execution, out-of-order execution, and variable-latency execution units are too complex to flush directly. In response, researchers have invented a variety of ways, many based on flushing, to relate the implementation pipeline to the specification. We cover here only those approaches that are most closely related to our work. The interested reader is refered to [1] for a relatively complete survey of pipeline verification approaches.
+Shen and Arvind [15] were first to prove an example of Burch-Dill correctness using the flushing function defined as the normal form in a confluent system. They model an abstract out-of-order processor and a simple specification machine as term rewriting systems. Their implementation model is similar to our intermediate specification MOP , and its Burch-Dill correctness against the specification ISA is the main result of [15]. We go a step further by proving stuttering bisimulation. Also, MOP is for us only an intermediate model that, in turn, allows us to reason about deterministic and more realistic implementations.
+Hosabettu et al. [10] devised a method to decompose the Burch-Dill correctness statement into lemmas, one per pipeline stage. This inspired the decomposition we describe in Section 4.
+Lahiri and Bryant [12], and Manolios and Srinivasan [13] verified complex mi- croprocessor models using the SMT solver UCLID. Some consistency invariants in [12] occur naturally in our confluence proofs as well, but the overall approach is not closely related. The WEB-reﬁnement method used in [13] produces proofs of stuttering bisimulation between ISA and MA that implies liveness. This gave motivation for our Theorem 3.6, but our stuttering bisimulation proof is different. Skakkebæk et al. [16,11] introduce incremental flushing and use a non-determini- stic intermediate model to prove correctness of a simple out-of-order core with in- order retirement. Like us, they rely on arguments about transaction re-ordering. While incremental flushing must deal with transactions as they are defined for the pipeline, we decompose pipeline transactions into much simpler “atomic” transac- tions. This facilitates a more general abstraction and should require significantly less manual proof effort for a given pipeline than the incremental flushing approach.
+
+Damm and Pnueli [6] use a non-deterministic specification that generates all program traces that satisfy data dependencies. They use an intermediate abstrac- tion with auxiliary variables to relate the specification and an implementation with out-of-order retirement based on Tomasulo’s algorithm. In each step of the spec- ification model, an entire instruction is executed atomically and its result written back. In the MOP approach, the execution of each instruction is broken into a sequence of mini-steps in order to relate to a pipelined implementation.
+Sawada and Hunt [14] use an intermediate model with an unbounded history table called a micro-architectural execution trace table. It contains instruction- specific information similar to that found in the MOP queue. Arons [2] follows a similar path, augmenting an implementation model with history variables that record the predicted results of instruction execution. In these approaches, auxiliary state is—like the MOP queue—employed to derive and prove invariants about the implementation’s relation to the specification. While their auxiliary state is derived directly from the MA, MOP is largely independent of MA and has fine-grained transitions.
+
+Conclusion
+We have presented an approach for verifying a pipelined system P against its spec- ification S by using an intermediate “pipeline mother” system M that explicates atomic computations occurring in steps of S. For definiteness, we assumed that P is a microprocessor model and S is its ISA, but the method can potentially be ap- plied to verify pipelined hardware components in general, or in protocol verification. This can all be seen as a refinement of the classical Burch-Dill method, but with the difficult flushing-based simulation pushed to the M vs. S level, where it amounts to proving local confluence of M—a conjunction of easily-stated properties of limited size, readily verifiable by SMT solvers.
+As an example, we specified a concrete intermediate model MOP for a simple load-store architecture and proved its correctness. We also verified the textbook machine DLX against it. However, our MOP contains more than is needed for verifying DLX : it is designed for simulation of microprocessor models with complex out-of-order execution that cannot be handled by currently-available methods. This will be addressed in future work. Also left for future work are improvements to our methodology (manual decomposition of verification goals into subgoals which we prove with CVC Lite [4]) and performance comparison with other published methods.
+
+
+References
+M. D. Aagaard, B. Cook, N. A. Day, and R. B. Jones. A framework for superscalar microprocessor correctness statements. Software Tools for Technology Transfer, 4(3):298–312, 2003.
+T. Arons. Verification of an advanced MIPS-type out-of-order execution algorithm. In Computer Aided Verification (CAV’04), volume 3114 of LNCS, pages 414–426, 2004.
+
+F. Baader and T. Nipkow. Term Rewriting and All That. Cambridge University Press, 1998.
+C. Barrett and S. Berezin. CVC Lite: A new implementation of the cooperating validity checker. In
+R. Alur and D. A. Peled, editors, Computer Aided Verification (CAV’04), volume 3114 of LNCS, pages 515–518, 2004.
+J. Burch and D. Dill. Automatic verification of pipelined microprocessor control. In D. L. Dill, editor,
+Computer Aided Verification (CAV’94), volume 818 of LNCS, pages 68–80, 1994.
+W. Damm and A. Pnueli. Verifying out-of-order executions. In H. F. Li and D. K. Probst, editors, Correct Hardware Design and Verification Methods (CHARME’97), pages 23–47. Chapman and Hall, 1997.
+J. Grundy, T. Melham, and J. O’Leary. A reflective functional language for hardware design and theorem proving. J. Functional Programming, 16(2):157–196, 2006.
+J. Grundy, T. F. Melham, S. Krsti´c, and S. McLaughlin. Tool building requirements for an API to first-order solvers. Electr. Notes Theor. Comput. Sci., 144(2):15–26, 2006.
+J. Hennessy and D. Patterson. Computer Architecture: A Quantitative Approach. Morgan Kaufmann, 1995.
+R. Hosabettu, G. Gopalakrishnan, and M. Srivas. Verifying advanced microarchitectures that support speculation and exceptions. In E. A. Emerson and A. P. Sistla, editors, Computer Aided Verification (CAV’00), volume 1855 of LNCS, pages 521–537, 2000.
+R. B. Jones. Symbolic Simulation Methods for Industrial Formal Verification. Kluwer, 2002.
+S. K. Lahiri and R. E. Bryant. Deductive verification of advanced out-of-order microprocessors. In
+W. A. Hunt Jr. and F. Somenzi, editors, Computer Aided Verification (CAV’03), volume 2725 of
+LNCS, pages 341–354, 2003.
+P. Manolios and S. K. Srinivasan. A complete compositional reasoning framework for the efficient verification of pipelined machines. In IEEE/ACM International conference on Computer-aided design (ICCAD’05), pages 863–870. IEEE Computer Society, 2005.
+J. Sawada and W. Hunt. Processor verification with precise exceptions and speculative execution. In
+A. J. Hu and M. Y. Vardi, editors, Computer Aided Verification (CAV’98), volume 1427 of LNCS, pages 135–146, 1998.
+X. Shen and Arvind. Design and verification of speculative processors. In Workshop on Formal Techniques for Hardware, Maarstrand, Sweden, June 1998.
+J. Skakkebæk, R. Jones, and D. Dill. Formal verification of out-of-order execution using incremental flushing. In A. J. Hu and M. Y. Vardi, editors, Computer Aided Verification (CAV’98), volume 1427 of LNCS, pages 98–109, 1998.

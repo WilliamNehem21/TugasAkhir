@@ -1,0 +1,553 @@
+Electronic Notes in Theoretical Computer Science 217 (2008) 41–59	
+www.elsevier.com/locate/entcs
+Structured Types and Separation Logic
+Harvey Tuch
+Sydney Research Lab., National ICT Australia, Australia 1
+School of Computer Science and Engineering, UNSW, Sydney, Australia harvey.tuch@nicta.com.au
+
+Abstract
+Structured types, such as C’s arrays and structs, present additional challenges in pointer program verifi- cation. The conventional proof abstractions, multiple independent typed heaps and separation logic, which in previous work have been built on a low-level memory model for C and shown to be sound, are not directly applicable in verifications. This is due to the non-monotonic nature of pointer and lvalue validity in the presence of the unary &-operator. For example, type-safe updates through pointers to fields of a struct break the independence of updates across typed heaps or ∧∗-conjuncts. In this paper we present a generalisation of our earlier formal memory model that captured the low-level features of C’s pointers and memory and formed the basis for an expressive implementation of separation logic, with new features providing explicit support for C’s structured types. We implement this framework in the theorem prover Isabelle/HOL and all proofs are machine checked.
+Keywords: Separation Logic, C, Interactive Theorem Proving
+
+
+Introduction
+Programs featuring pointers are more difficult to verify than programs without indirection, largely as a result of the aliasing problem [1]. For example, consider a program with two pointer variables float * p and int * q and the following triple:
+{| True |} ∗p = 3.14; ∗q = 42; {| ∗p = ? |}
+We are unable to ascertain the value pointed to by p as it may refer to the same lo- cation as q. With type-safe languages, this form of aliasing, which we call inter-type aliasing, can be ignored in proofs if the abstraction of multiple-typed heaps is used, where we have a semantic model with a heap function variable for each language type, e.g. float-heap :: float ptr ~ float, int-heap :: int ptr ~ int. Unfortunately in C we do not have this luxury as language features such as pointer arithmetic and cast- ing break any illusion of type-safety, and we are forced to adopt the programmer’s
+
+1 National ICT Australia is funded through the Australian Government’s Backing Australia’s Ability ini- tiative, in part through the Australian Research Council.
+
+1571-0661 © 2008 Elsevier B.V. Open access under CC BY-NC-ND license.
+doi:10.1016/j.entcs.2008.06.041
+
+model of the heap as a function addr ⇒ byte, in particular when we wish to verify systems code exploiting compiler and architecture dependent language features.
+A key observation is that while C permits code that violates memory and type safety, most code does remain within a type-safe fragment, and in earlier work we reconciled the multiple-typed heaps proof abstraction and this low-level view of
+memory, providing a rewriting approach to lifting proof states from byte granularity maps to typed heaps [13]. This avoided inter-type aliasing considerations where possible and gave a unified framework for proofs that needed to consider code that violated type-safety. The framework included a C parsing tool that emitted a mixed deep-shallow embedding in Schirmer’s Hoare logic verification environment [11].
+There still remains the problem of intra-type aliasing however, where pointers
+of the same type may alias one another. Again, it is possible to provide explicit conditions on states stating the presence or absence of aliasing, but this becomes
+rather cumbersome for inductively-defined data structures [1,10]. In particular, the frame problem limits the scalability of verifications. A potential solution is the separation logic of O’Hearn, Reynolds and others [5,10], providing a language
+for specifications and inference rules that both concisely allows for the expression of aliasing conditions in assertions and ensures modularity of specifications. In other previous work [14], we provided a shallow embedding of separation logic in Isabelle/HOL, building on the multiple-typed heaps development, resulting in a framework capable of accommodating different proof techniques to address aliasing. In this paper, we extend this framework to further support C’s structured types:
+We provide details of a deep embedding of structure type information capable of handling C’s size, alignment, and padding restrictions as well as semantics for heap dereferencing for structured types.
+Earlier rewrites and proof rules for multiple-typed heaps and separation logic are generalised in such a way that they benefit from mechanisation and are still usable in verifications with little new overhead.
+Aspects of structured types that were previously handled in our semantics through shallow translation by trusted ML code are able to be promoted to the HOL level.
+
+C structs
+In our C-HOL type encoding, each C type was given a unique type in the theorem prover. All such types belonged to an axiomatic type class α::c-type in Isabelle, which introduced constants that connected the low-level byte representation and the HOL values:
+to-bytes :: α::c-type ⇒ byte list	from-bytes :: byte list ~ α::c-type
+typ-tag :: α::c-type itself ⇒ typ-tag	typ-info :: α::c-type itself ⇒ typ-info
+The functions to-bytes and from-bytes converted between Isabelle values and lists of bytes suitable for writing to or reading from the raw heap state. The function typ-tag associated a unique type tag with each α::c-type, providing a means of treat- ing language types as first-class values in HOL. Finally, typ-info allowed size and
+
+
+struct a	struct k
+
+Fig. 1. Heap update dependencies.
+
+alignment information for the type to be calculated.
+A distinct Isabelle pointer type for each Isabelle type, used to model C pointer types, was defined with:
+datatype α ptr = Ptr addr
+The phantom α on the left-hand side was used to associate the pointer type infor- mation with pointer values in Isabelle’s type system.
+Primitive types such as char and long * could be defined in a library for each architecture/compiler in the expected way. struct types could be modelled at the HOL level with Isabelle record types. Trusted ML code in the C parser provided the following for each structured type used in a program:
+A corresponding record declaration
+Definitions of functions appearing in α::c-type, requiring full structure information to appear shallowly at the HOL level.
+Lvalue calculations, requiring the full structure information inside the ML parser, as well as offset/size/alignment calculations.
+Example 2.1 As a running example, consider the following struct declarations:
+struct x {	struct a {
+float y;	int b;
+char z;	struct x c;
+};	};
+
+The following triple demonstrates the most significant limitation with the earlier memory model:
+{| ∗p = (| y = 2.1, z = 'm' |) |} p→y = 1.2; {| ∗p = ? |}
+The problem here is that even though the update and dereference are type-safe, and we do not need to consider aliasing, the proof rules we had developed so far considered this to be type-unsafe, as any region of memory could only have a single type, and p and &(p→y ) share a common address despite having different but related types. There is a similar problem for the effect of updates through struct references on enclosed field pointer values.
+Fig. 1 demonstrates how this problem manifests itself in the multiple-typed heaps abstraction. It is no longer the case that updates to heaps can be treated independently, i.e.:
+
+Updating a field type’s heap may affect typed heaps of enclosing structs.
+Updating a struct affects typed heaps of field types (fields-of-fields, etc.).
+Update effects are no longer simple function update, they involve potentially multiple field updates and accesses.
+The solution we propose in this paper is to treat structured type information as a first-class value in HOL and develop generalised definitions, rewrites and rules making use of this. We treat structured types as first-class C types in the following to provide the benefits of abstraction and typing in proofs, even though at a semantic level they can be considered in terms of their members. Arrays in the heap decay to the corresponding pointer arithmetic, and inside structured values are also modelled using the definitions in §4.1. unions are treated differently, decaying to casts and byte list s as value representations.
+
+
+Notation
+Our meta-language Isabelle/HOL conforms largely to everyday mathematical nota- tion. This section introduces further non-standard notation and in particular a few basic data types along with their primitive operations.
+The space of total functions is denoted by ⇒. Type variables are written α, β, etc. The notation t :: τ means that HOL term t has HOL type τ . The option type
+datatype α option = None | Some α
+adjoins a new element ⊥ to a type α. We use α option to model partial functions, writing [a♩ instead of Some a and α ~ β instead of α ⇒ β option. The Some constructor has an underspecified inverse called the, satisfying the [x♩ = x. Function update is written f (x := y ) where f :: α ⇒ β, x :: α and y :: β and f (x '→ y ) stands for f (x := Some y ). Domain restriction is f TA where f ::α ~ β and (f TA) x = (if x ∈ A then f x else ⊥).
+Finite integers are represented by the type α word where α determines the word length. For succinctness, we use abbreviations like word8 and word32. The functions unat and of-nat convert to and from natural numbers (with u for unsigned ).
+Hoare triples are written {|P |} c {|Q |} where P and Q are assertions and c a program. In assertions, we use the syntax ´x to refer to the program variable x in the current state, while σx means x in state σ. Program states can be bound in assertions by {|σ. P |}.
+Isabelle supports axiomatic type classes [16] similar to, but more restrictive than Haskell’s. The notation α::ring restricts the type variable α to those types that support the axioms of class ring. Type classes can be reasoned about abstractly, with recourse just to the defining axioms. Further, a type τ can be shown to belong to a type class given a proof that the class’s axioms hold in τ . All abstract consequences of the class’s axioms then follow for τ .
+For every Isabelle/HOL type α we can derive a type α itself, consisting of a single element denoted by TYPE(α). This provides a convenient way to restrict the
+
+type of a term when working with polymorphic definitions.
+
+Memory model
+Type descriptions
+The solution proposed in §2 requires that type meta-data be available at the HOL level. This needs to include information about the type structure, size, and align- ment. In addition, a fine grained description of the value representation encoding and decoding functions, such that it is possible to extract the functions for specific fields as well as the structure as a whole, is desirable.
+At the HOL level, structure objects are represented using potentially nested Isabelle/HOL records. Each field has access and update functions defined by the record package, e.g. for struct a represented as HOL record type a-struct, the functions b::a-struct ⇒ int and b-update::(int ⇒ int ) ⇒ a-struct ⇒ a-struct are
+supplied — we write v (|b := x |) for b-update (K x ) v. Where possible, it is helpful to
+use these record functions when reasoning about field accesses and updates, rather than the more detailed, lower-level view of fields as a subsequence of the byte-level value representation. To facilitate this, functions derived from the record functions are included in the type meta-data.
+Definition 4.1 We can capture abstract record access and update functions for fields as ﬁeld descriptions:
+record	α field-desc	=	field-access :: α ⇒ byte list ⇒ byte list
+field-update :: byte list ⇒ α ⇒ α
+These functions provide a connection between the structure’s value as a typed HOL object and the value of a field in the structure as a byte list. field-access takes an additional byte list parameter, utilised in the semantics to provide the existing state of the byte sequence representing the field being described. This allows padding fields the ability to “pass through” the previous state during an update 2 . E.g. The field description for field b in struct a would be:
+(|field-access = to-bytes ◦ b, field-update = λbs s. if |bs| = size-of TYPE(int )
+then s(|b := from-bytes bs|) else s|)
+
+Definition 4.2 The type meta-data is captured in a type description with the following mutually-inductive definitions:
+datatype	α typ-desc	=	TypDesc α typ-struct typ-name
+α typ-struct	=	TypScalar nat nat α
+| TypAggregate (α typ-desc × field-name) list
+A type description is a tree, with structures as internal nodes, branches labeled with field names and leaves corresponding to fields with primitive types. At leaves, size, alignment and an α is provided. A type description for struct a is given in Fig. 2.
+
+2 A more conservative, standard compliant approach, would be to use non-determinism or an oracle here.
+
+
+TypDesc (TypAggregate ...) "struct a"
+	
+
+TypDesc (TypScalar 4 2 b_field_desc) "int"
+TypDesc (TypAggregate ...) "struct x"
+"y"
+
+TypDesc (TypScalar 2 1 y_field_desc) "float"
+
+"z"
+"!pad"
+
+
+TypDesc (TypScalar 1 0 pad_desc) "!pad"
+TypDesc (TypScalar 1 0 z_field_desc) "char"
+
+Fig. 2. Type description for struct a.
+
+There is not a one-to-one correspondence between fields in this structure and those in a C struct, as fields in this definition are also intended to explicitly repre- sent the padding inserted by the compiler to ensure alignment restrictions are met. Type descriptions are specialised in two ways:
+α typ-info	=	α field-desc typ-desc
+typ-uinfo	=	(byte list ⇒ byte list ) typ-desc
+The type information provides the information required to describe the encoding and decoding of the representation. Type information t can be “exported”, with a function export-uinfo, to remove the α dependency with export-uinfo t, where leaf field descriptions are collapsed to byte list normalisation functions, i.e. an α ﬁeld-desc d at a leaf with size n is replaced with λbs. field-access d (field-update d bs arbitrary) (replicate n 0).
+Normalisation is motivated by the observation that padding fields are ignored when reading structured values from their byte representation. Also, there may exist more than one byte representation for a value in C, even for primitive types. It provides us with a means to quantify over and compare C types.
+The type information for a C type α is given by TYPE(α)τ and we write
+TYPE(α)ν for export-uinfo TYPE(α)τ .
+Definition 4.3 A field name used to access and update structure fields with the C
+. and → operators can be viewed as a ﬁeld-name list of .-separated fields leading to a sub-structure, which we refer to as a qualiﬁed ﬁeld name. A qualified field name may lead to a field with a primitive or structure type, e.g. [] is the structure itself. Arrays members are named by index, e.g. [ ''--array-37 ''].
+Table 1 provides a number of functions defined over type descriptions that we make use of in this paper. Here we summarise and provide examples — all func- tions are backed by primitive recursive definitions in Isabelle/HOL. t Df performs “lookup”, following a path f from the root of t and returning a sub-tree and offset if it exists. A related concept is td-set, where all sub-trees are returned. E.g.
+TYPE(a-struct )ν Q[ ''c'']	= [(TYPE(x-struct )ν , 4)♩
+TYPE(a-struct )ν Q[ ''c'', ''b''] = ⊥
+td-set TYPE(x-struct)ν	= {(TYPE(x-struct )ν ,  0),  (TYPE(float )ν ,  0),  (TYPE(char )ν ,  2),
+(pad-export 1, 3)}
+
+size-td and align-td are found by summing and taking the maximum of the leaf node sizes and alignments respectively. The latter is justified by the C standard’s requirement that fields of aligned structures are themselves aligned. field-access-ti and field-update-ti compose their respective primitive leaf functions sequentially to provide the expected encoding and decoding functions for the aggregate type. E.g.
+field-access-ti TYPE(a-struct )τ  = λv bs. to-bytes (b v ) (take (size-of TYPE(int )) bs) @ to-bytes (c v )
+(take (size-of TYPE(x-struct )) (drop (size-of TYPE(int )) bs))
+
+Table 1
+Type description functions.
+
+Definition 4.4 The address corresponding to an lvalue designated by a structure field access or update can be found with:
+&(p::α ptr →f ) ≡ ptr-val p + of-nat (snd (the (TYPE(α)ν Qf )))
+Lvalues appear in the semantics and proof obligations for statements like p->f = v;.
+Definition 4.5 Finally, the connection between the HOL typed value, type infor- mation, size, alignment and underlying byte representation can be made through the following function definitions:
+to-bytes (v ::α)	≡ field-access-ti TYPE(α)τ v	from-bytes bs	≡ field-update-ti TYPE(α)τ bs arbitrary size-of TYPE(α) ≡ size-td TYPE(α)τ	align-of TYPE(α) ≡ 2 ˆ align-td TYPE(α)τ
+
+Type constraints
+In this section we describe the fundamental properties that need to hold for each Isabelle/HOL type we use to model a C type. These ensure that the functions in Defn. 4.5 and the rest of §4.1 behave as expected by the C standard and in the proofs of the update rules. They are also available to the user of the framework.
+Definition 4.6 The α::mem-type axiomatic type class requires the following size and alignment related properties to hold on a C type α for instantiation:
+align-of TYPE(α) dvd size-of TYPE(α)	size-of TYPE(α) < |addr|	align-of TYPE(α) dvd |addr|
+These conditions follow mostly from requirements in the C standard, with the ex- ception of the final alignment constraint which we add to make pointer arithmetic
+
+better behaved, and which holds on all the C implementations we are aware of. The constant |addr| represents the size of the address space, e.g. 232.
+The result of an entire structure update is independent of the original value:
+|bs| = size-of TYPE(α) −→ field-update-ti TYPE(α)τ bs v = field-update-ti TYPE(α)τ bs w
+Three well-formedness conditions on the type information ensure sensible values for field names, node sizes and field descriptions:
+wf-desc TYPE(α)τ	wf-size-desc TYPE(α)τ	wf-field-desc TYPE(α)τ
+These conditions are now detailed in Defn. 4.7, Defn. 4.8 and Defn. 4.10.
+Definition 4.7 We write wf-desc t when a type description t has no node with two or more branches labelled with the same field name.
+Definition 4.8 We write wf-size-desc t when every node of the type description t
+has a non-zero size.
+Definition 4.9 Type information t is consistent if the following properties hold:
+∀ v bs bs'. |bs| = |bs'| −→ field-update-ti t bs (field-update-ti t bs' v ) = field-update-ti t bs v 
+∀ v bs. |bs| = n −→ field-update-ti t (field-access-ti t v bs) v = v
+∀ bs. |bs| = n −→ (∀ bs'. |bs'| = n −→ (∀ v v'. field-access-ti t (field-update-ti t bs v ) bs' =
+field-access-ti t (field-update-ti t bs v') bs'))
+∀ v bs. |bs| = n −→ |field-access-ti t v bs| = n
+where n = size-td t. The properties are similar to those already provided by Is- abelle’s record package at the HOL level and can be established automatically.
+Definition 4.10 Type information is well-formed w.r.t. field descriptions if all leaf fields are consistent, and for every pair of distinct leaf fields, s and t, the following properties hold:
+∀ v bs bs '. field-update-ti s bs (field-update-ti t bs' v ) = field-update-ti t bs' (field-update-ti s bs v )
+∀ v bs bs'. |bs| = size-td t −→ |bs'| = size-td s −→ field-access-ti s (field-update-ti t bs v ) bs' =
+field-access-ti s v bs'
+Again, these are standard commutativity and non-interference properties that we have at the HOL level and wish to preserve in field descriptions.
+Theorem 4.11 The α::mem-type axioms imply the following properties:
+
+|bs| = size-of TYPE(α) from-bytes (to-bytes v bs) = v
+|bs| = size-of TYPE(α)
+
+|to-bytes v bs| = size-of TYPE(α)
+0 < size-of TYPE(α)
+
+Type combinators
+The constraints of the previous section require both the construction of suitable type information and a corresponding α::mem-type instantiation proof for each type appearing in programs we wish to verify. This can be done entirely at the ML level, by synthesising both the intended HOL term for the type information directly, and a proof on the unfolded definition, but this is fragile and does not scale well.
+An improved approach to type information construction is to do so using combi- nators that allow the structure to be built up field-wise and for which generic proof rules can be given. We use this approach and combinators and corresponding proof rules have been derived, but we elide for brevity.
+
+
+
+
+
+
+
+
+
+
+
+size_of TYPE(int)
+heap_mem
+
+
+
+Fig. 3. int heap representation.
+
+Semantics
+The C translation has a shallow HOL embedding as its target for expressions. Tuch et al [14] provide details of how side-effects and other aspects of the C semantics are translated, here we provide simply the definitions for the terms used to model heap accesses and updates.
+Definition 4.12 Heap dereferences in expressions, e.g. ∗p + 1 are given a semantics by first lifting the raw heap state with the polymorphic lift function, e.g. lift s p + 1 where s is the current state.
+heap-list :: (addr ⇒ byte) ⇒ nat ⇒ addr ⇒ byte list
+heap-list h 0 p	≡ []
+heap-list h (Suc n) p ≡ h p·heap-list h n (p + 1)
+lift :: (addr ⇒ byte) ⇒ α::c-type ptr ⇒ α
+lift h ≡ λp. from-bytes (heap-list h (size-of TYPE(α)) (ptr-val p))
+heap-update providing semantics for update dereferences:
+heap-update-list :: addr ⇒ byte list ⇒ (addr ⇒ byte) ⇒ (addr ⇒ byte)
+heap-update-list p [] h	≡ h
+heap-update-list p (x·xs) h ≡ heap-update-list (p + 1) xs (h(p := x ))
+heap-update p (v ::α) h	≡ heap-update-list (ptr-val p) (to-bytes v (heap-list h (size-of TYPE(α))
+(ptr-val p))) h
+For example, ∗p = ∗q + 5 translates to the state transformer λs. heap-update p
+(lift s q + 5) s. Fig. 3 illustrates the above functions’ value transformations.
+
+Heap type description
+Inside the type-safe fragment of C, where the majority of code remains, there is an implicit mapping between memory locations and types, and heap dereferences respect this mapping. In earlier work [14], we introduced this mapping as an addi- tional state component, and referred to it as the heap type description:
+heap-typ-desc = addr ~ typ-tag option
+The heap type description is a history variable, and as such does not influence the semantics of our programs. Since in C this mapping cannot be extracted from the source code, the program verifier adds proof annotations that update the heap type
+
+
+addr
+
+
+struct a
+
+Fig. 4. Previous heap type description with a valid struct a. pointer
+
+description. We wrote d,g |=t p to mean that the pointer p is valid in heap type description d with guard g. The guard g restricts the validity assertion based on the language’s pointer dereferencing rules. This is depicted in Fig. 4.
+The problem with this notion of the heap type description is that only a single pointer may be valid at any location. With structured types, we would like that at the base address a pointer for the structure type and that of the first field’s type be valid. In general, for valid qualified field names f, we desire a validity monotonicity property, i.e. d,g |=t p =⇒ d,g |=t Ptr &(p→f ).
+To achieve this, we introduce a new definition for the heap type description:
+typ-slice	= nat ~ typ-uinfo × bool heap-typ-desc = addr ⇒ bool × typ-slice
+Each location maps to a tuple, with the first component a bool indicating whether there is a value located at the address 3 . The second component is a typ-slice, providing an indexed map to the typ-uinfos that may reside at a particular address. The index is calculated from the depth of the tree at an offset. The bool value indicates whether the location is the base or some other part of a value’s footprint 4 .
+An example of the new heap type description is provided in Fig. 5. Each point is a typ-uinfo × bool pair, with the colour determined by the first component and shape by the second. Here an a-struct footprint extends on the horizontal axis above the footprints of its members. The vertical axis indicates a position in the typ-slice at the address. The second half of the a-struct is higher than the first, as the tree is deeper due to the x-struct changing the depth past this offset. An observation about the intuition behind pointer validity that can be taken from this figure is that it is independent of the presence or absence of type information from enclosing structured types in the history variable.
+
+
+struct a
+
+
+nat
+
+
+
+
+
+
+
+char
+
+
+
+
+
+
+addr
+
+struct x
+
+
+
+Encoding base Rest of footprint
+
+
+Fig. 5. New heap type description with a valid struct a pointer.
+
+
+Definition 4.13 Pointer validity is defined for the heap type description as:
+
+3 This approach is taken in preference to a partial function to aid in partitioning state in §6.
+4 This is for same reason as in the previous approach to the heap type description, allowing consideration of the potential overlap of values of the same type to be eliminated for valid pointers.
+
+
+
+
+SIndexTyp 2
+SIndexTyp 1
+SIndexTyp 0 SIndexVal
+
+
+Fig. 6. Example heap-state.
+
+
+valid-footprint d x t ≡ let n = size-td t
+in 0 < n ∧
+(∀ y<n. list-map (typ-slice t y) ⊆m snd (d (x + of-nat y )) ∧
+fst (d (x + of-nat y )))
+d,g |=t (p::α ptr ) ≡ valid-footprint d (ptr-val p) TYPE(α)ν ∧ g p 
+where list-map::α list ⇒ (nat ~ α) converts a list to the expected map and typ-slice takes a vertical slice of the intended heap footprint from the exported type infor- mation at a given offset, e.g.:
+typ-slice TYPE(a-struct )ν 4	= [(TYPE(float )ν , True), (TYPE(x-struct )ν , True), (TYPE(a-struct )ν ,
+False)]
+The use of the map subset operator ⊆m provides monotonicity.
+As before, we have a retyping function ptr-retyp that updates the heap type description to make a given pointer valid. The definitions, properties and rules for this function are omitted for brevity.
+
+Typed heaps
+Lifting
+The following two-stage lifting process provides an abstract heap view for proofs.
+Definition 5.1 The first stage, lift-state, results in an intermediate heap-state:
+
+An example of this state is provided in Fig. 6, with a x-struct footprint. The explanation for this model is provided in §6.1.
+The function lift-state filters out locations that are False or ⊥ in the heap type description, depending on the index, removing values that should not affect the final lifted typed heaps. Equality between lifted heaps is then modulo the heap type description locations of interest for valid pointers.
+lift-state ≡ λ(h, d ) (x , y ).
+case y of SIndexVal ⇒ if fst (d x ) then [SValue (h x )♩ else ⊥
+| SIndexTyp n ⇒ option-case ⊥ (Some ◦ STyp) (snd (d x ) n)
+
+
+heap_mem heap_typ_desc
+nat
+
+
+addr
+
+lift_state
+
+
+a_struct ptr~ a-struct x_struct ptr~ x-struct
+
+
+
+
+SIndexTyp 2
+SIndexTyp 1
+SIndexTyp 0 SIndexVal
+
+
+
+
+addr
+
+lift_typ_heap
+float ptr~ float int ptr~ int char ptr~ char
+
+
+
+Fig. 7. Two-stage lifting.
+
+Lifted validity and heap-list are expressed on heap-states with d,g |=s p and heap-list-s respectively in the obvious way.
+Definition 5.2 The second lifting stage results in typed lifted heaps again. The lift-typ-heap function restricts the heap domain so that the only locations affecting the resultant α ptr ~ α heap are valid pointer values. Equality is now modulo pointer validity.
+lift-typ-heap g s ≡ (Some ◦ from-bytes ◦ heap-list-s s (size-of TYPE(α)) ◦ ptr-val)†{p | s,g |=s p}
+
+The two stages, shown in Fig. 7, are combined with liftτ :
+liftτ g ≡ lift-typ-heap g ◦ lift-state
+Like lift, liftτ is polymorphic and returns an α typed heap. The program embedding continues to use the functions lift and heap-update, while pre/post conditions and invariants use the stronger liftτ to make more precise statements.
+
+Update dependency order
+Definition 5.3 A partial order can be defined on type descriptions that expresses the update dependency between heaps, formalising the relation described in §2:
+s ≤ t ≡ ∃ n. (s, n) ∈ td-set t
+This can be lifted to a predicate on α::c-type itself and β::c-type itself s:
+s ≤τ t ≡ export-uinfo TYPE(α)τ ≤ export-uinfo TYPE(β)τ
+
+Example 5.4 Using the running example, TYPE(x-struct ) <τ TYPE(a-struct ) and TYPE(int ) <τ TYPE(a-struct ). An update to an a-struct will always affect the lifted int heap, but an update of a x-struct will only sometimes affect the a-struct heap.
+
+Rewrites
+In this section we develop rewrites that allow the effects of updates on lifted typed heaps to be evaluated. First we present some auxiliary definitions and the key theorems, Thm. 5.7 and Thm. 5.9. These theorems have the form of conditional rewrites, but require some additional support to be efficiently applicable, so are followed by this detail.
+Definition 5.5 A list of names of all fields matching an exported type information can be obtained with field-names :: α typ-info ⇒ typ-uinfo ⇒ qualiﬁed-ﬁeld-name list. E.g. field-names TYPE(a-struct )τ TYPE(float )ν = [[ ''c '', ''y'']].
+Definition 5.6 From td-set, a predicate may be derived that checks whether a given pointer p::α ptr is to a field of a structured type with base q ::β ptr :
+field-of p q ≡ (TYPE(α)ν , unat (ptr-val p − ptr-val q )) ∈ td-set TYPE(β)ν 0
+From D, functions may be derived that provide the first and second components of the result for a valid qualified field name:
+field-typ TYPE(α) f ≡ fst (the (TYPE(α)τ Qf ))	field-offset TYPE(α) f ≡ snd (the (TYPE(α)ν Qf ))
+Theorem 5.7 The lifted β heap following an update of a valid α ptr p, where α
+is a sub-type of β is given by:
+d,g' |=t p	TYPE(α) ≤τ TYPE(β)
+liftτ g (heap-update p v h, d ) = super-field-update p v (liftτ g (h, d ))
+where
+super-field-update p v h ≡ λq. if field-of p q 
+then case h q of ⊥ ⇒ ⊥ 
+| [w ♩ ⇒ [update-value (field-names TYPE(β)τ TYPE(α)ν ) v w 
+(unat (ptr-val p − ptr-val q ))♩
+else h q 
+
+Locations that do not enclose or are not valid β pointers are unaffected. The update is given by update-value:
+update-value [] (v ::α) (w ::β) x ≡ w
+update-value (f ·fs) v w x	≡ if x = field-offset TYPE(β) f then field-update-ti (field-typ TYPE(β) f )
+(to-bytes0 v ) w else update-value fs v w x
+This traverses the relevant fields of the enclosing structured type, looking for a field offset that matches the difference between the enclosing pointer base and p. If a match is found, update-value performs the update with the field’s updator. We write to-bytes0 and field-access-ti0 when the supplied byte list is all zero.
+While Thm. 5.7 gives a conditional rewrite that allows an update to be lifted to the typed heap level of §5.1, making use of the updated typed heap could involve unfolding this complex definition in general. However, additional rewrites can be given for well-behaved updates.
+Theorem 5.8 For a valid qualiﬁed ﬁeld name, a super-field-update for a pointer
+&(p→f ) can be reduced to the ﬁeld update obtained from the type information:
+
+TYPE(β)τ Qf = [(s, n)♩	TYPE(α)ν = export-uinfo s	liftτ g s p = [w♩
+super-field-update (Ptr &(p→f )) v (liftτ g s) = liftτ g s(p '→ field-update-ti s (to-bytes0 v ) w )
+The D side-condition can be resolved without having to unfold the type information using rewrites installed during construction with combinators at the ML level. The field-update-ti is also rewritten to a record field updator. E.g.:
+liftτ g s p = [w♩ =⇒ super-field-update (Ptr &(p→[ ''next''])) v (liftτ g s) = liftτ g s(p '→ w (|next := v |))
+A rewrite can also be given for the two remaining cases, where TYPE(β) <τ
+TYPE(α) or TYPE(α) ⊥τ TYPE(β).
+Theorem 5.9 The lifted β heap following an update of a valid α ptr p, where α
+is not a strict sub-type of β is given by:
+d,g' |=t p	¬ TYPE(α) <τ TYPE(β)
+liftτ g (heap-update p v h, d ) = sub-field-update (field-names TYPE(α)τ TYPE(β)ν ) p v (liftτ g (h, d ))
+where
+sub-field-update [] p (v ::α) s ≡ s::β ptr ~ β 
+sub-field-update (f ·fs) p v s ≡ (let s ' = sub-field-update fs p v s in s '(Ptr &(p→f ) '→ from-bytes
+(field-access-ti0 (field-typ TYPE(α) f ) v )))†dom s
+
+Non-interference
+Theorem 5.10 The rewrites for an update to a lifted typed heap through a valid pointer of the same type, or a disjoint type are the same as before [14]:
+
+d,g |=t p
+
+
+liftτ g (heap-update p v h, d ) = liftτ g (h, d )(p '→ v )
+d,g' |=t p	TYPE(α)ν ⊥t TYPE(β)ν liftτ g (heap-update p v h, d ) = liftτ g (h, d )
+
+Bornat [1] describes multiple independent heaps based on distinct field names. Updates through a pointer dereference to a specific field only affect that heap. This does not work directly in the presence of the &(p→f ) operator and address arithmetic. However, the following can be shown:
+Theorem 5.11 When the base pointers are of the same type β, and neither of the ﬁeld names are a preﬁx of the other, updates through an α pointer derived from one ﬁeld do not affect the value in the γ lifted heap at the other:
+d,g' |=t p	d,ga |=t q	TYPE(β)τ Qf = [(s, m)♩	TYPE(β)τ Qf' = [(t, n)♩
+size-td s = size-of TYPE(α)	size-td t = size-of TYPE(γ)	¬ f ≤ f '	¬ f ' ≤ f
+liftτ g (heap-update (Ptr &(p→f )) v h, d ) (Ptr &(q→f')) = liftτ g (h, d ) (Ptr &(q→f'))
+
+
+
+Separation logic
+In this section we describe how the shallow embedding of separation logic [5,10] in Tuch et al [14] can be extended to structured types. The focus is on the singleton heap assertion p '→g v as most of the other definitions and properties are standard.
+
+Domain
+We model separation assertions as predicates on heap-states, applied in asser- tions of the verification environment to the result of the first lifting stage of §5.1. For example, a loop invariant with the separation assertion P and heap mem- ory and type description state in the variables h and d respectively is written
+{| P (lift-state (´h,´d )) |}, which we abbreviate as {| Psep |}.
+The rationale for this choice of domain is that it allows for more expressive separation assertions than are possible with simpler models. From the earlier in- termediate state, addr ~ typ-tag option × byte for unstructured types, a naive extension might be addr ~ typ-uinfo list × byte. Unfortunately, this does not al- low for two assertions separated by ∧∗ to refer to distinct type levels at the same address, necessary to provide flexible rules for retyping and unfolding, e.g. ignoring padding, we would expect that (p '→ (| y = 3, z = 'r ' |)) = (Ptr (&(p→[ ''y ''])) '→
+3) ∧∗ (Ptr (&(p→[ ''z ''])) '→ 'r ') ∧∗ typ-outline p, where typ-outline p contains the
+outer level type information for the enclosing structure. Adding a type level index to the domain of the heap-state provides this facility.
+
+Shallow embedding
+Definition 6.1 The s-footprint::α::c-type ptr ⇒ s-addr set gives the set of addresses inside a pointer’s heap-state footprint:
+s-footprint p ≡ {(ptr-val p + of-nat x,
+y ) | x < size-td TYPE(α)ν ∧
+(y = SIndexVal ∨ (∃ n. y = SIndexTyp n ∧ n < |typ-slice TYPE(α)ν x|))}
+
+Definition 6.2 p '→g v asserts that the heap contains exactly one mapping match- ing the guard g, at the location given by pointer p to value v :
+p '→g v ≡ λs. lift-typ-heap g s p = [v♩ ∧ dom s = s-footprint p ∧ wf-heap-val s
+wf-heap-val asserts that the type, SValue or STyp, of a value in the heap-state, if present, matches the type of the index, SIndexVal or SIndexTyp respectively.
+Definition 6.3 The standard definitions [10] for connectives can then be used, for the empty heap predicate, separation conjunction and implication these are:
+	≡ λs. s = empty
+s0 ⊥ s1	≡ dom s0 ∩ dom s1 = ∅
+s0 ++ s1  ≡ λx. case s1 x of ⊥ ⇒ s0 x | [y♩ ⇒ [y♩
+P ∧∗ Q	≡ λs. ∃ s0 s1. s0 ⊥ s1 ∧ s = s1 ++ s0 ∧ P s0 ∧ Q s1 P −→∗ Q ≡ λs. ∀ s '. s ⊥ s ' ∧ P s' −→ Q (s ++ s ')
+
+Since this is a shallow embedding, standard HOL connectives and quantifiers can be freely mixed with the separation connectives, e.g. λs. P s ∧ (Q ∧∗ R) s.
+The standard commutative, associative, and distributive properties apply to the connectives, and we have formalised pure, intuitionistic, domain, and strictly exact assertions and properties [10]. The frame rule also still applies in this development.
+
+Lifting proof obligations
+Our verification condition generator applies weakest precondition rules to transform Hoare triples to HOL goals that can then be solved by applying theorem prover tactics. In §5.3, rewrites were given that could lift the raw heap component of these proof obligations, and in this section we provide rules that allow the low-level applications of lift and heap-update to be expressed in terms of separation assertions. This is desirable as reasoning can then use the derived rules for these assertions at the separation logic level.
+Theorem 6.4 The following rule connects lift and separation mapping assertions:
+(p ‹→g v ) (lift-state (h, d ))
+lift h p = v
+Heap update dereferences produce proof goals of the form:
+P (lift-state (h, d )) =⇒ Q (lift-state (heap-update p0 v 0 (heap-update p1 v 1
+(heap-update p···  v··· (heap-update pn vn h))),d ))
+Theorem 6.5 To reduce heap-updates to the pre-state we can use:
+(p '→g w ∧∗ R) (lift-state (h, d ))	TYPE(β)τ Qf = [(s, n)♩	export-uinfo s = TYPE(α)ν
+(p '→g field-update-ti s (to-bytes0 v ) w ∧∗ R) (lift-state (heap-update (Ptr &(p→f )) v h, d ))
+Thm. 6.5 can be applied in goals in similar situations to Thm. 5.8.
+Theorem 6.6 The earlier heap-update rules [14] still apply:
+
+(g ▶s p ∧∗ (p '→g v −→∗ P )) (lift-state (h, d ))
+
+P (lift-state (heap-update p v h, d ))
+(g ▶s p ∧∗ R) (lift-state (h, d ))
+
+(p '→g v ∧∗ R) (lift-state (heap-update p v h, d ))
+
+Unfolding
+Additional rules can be given that allow one to dive inside a singleton heap assertion for a structured type value. This may be needed in extracting points-to information to aid in discharging guard proof obligations or side-conditions of some of the rules such as Thm. 6.4 and is useful in allowing the granularity of an assertion to be changed.
+Theorem 6.7 A points-to mapping assertion for a valid qualiﬁed ﬁeld name can be derived from a singleton heap assertion with:
+(p '→g v ) s	TYPE(β)τ Qf = [(t, n)♩	export-uinfo t = TYPE(α)ν	guard-mono g g 
+(Ptr &(p→f ) ‹→g from-bytes (field-access-ti0 t v )) s
+We have also developed a rewrite approach that unfolds fields for structured values — one can “zoom” in and out of structured values with this.
+
+Example: In-place list reversal
+Fig. 8 provides an example type-safe C program that performs in-place list reversal on a singly-linked list using a struct type to represent nodes.
+
+struct node {	struct node *reverse (struct node *ptr)
+int item;	{
+struct node *next;	struct node *last = NULL;
+};
+while (ptr)
+{
+struct node *temp = ptr->next;
+
+ptr->next = last; last = ptr;
+ptr = temp;
+}
+return last;
+}
+
+Fig. 8. In-place list reversal C source code.
+This is a standard example in the separation logic and pointer program ver- ification literature [10,7,14] and the pre/post specification and loop invariant are provided in Thm. 7.2.
+Definition 7.1 The specification and invariant make reference to a list abstrac- tion predicate, which lifts from a pointer-linked data structure in the heap to the corresponding algebraic data-type for a node list in Isabelle/HOL:
+list [] i	≡ λs. i = NULL ∧  s
+list (x·xs) i	≡ λs. i /= NULL ∧ (∃ j . item j = x ∧ (i '→g j ∧∗ list xs (next j )) s)
+Theorem 7.2 The reverse function implements the following speciﬁcation:
+∀ zs. {|(list zs ´ptr )sep|}
+´reverse-ret :== PROC reverse(´ptr )
+{|(list (rev zs) ´reverse-ret)sep|}
+
+Proof.
+After running the verification condition generation, we are left with the 3 result- ing proof obligations arising from the while Hoare logic rule, with the invariant:
+{|∃ xs ys. (list xs ´ptr ∧∗ list ys ´last )sep ∧ rev zs = rev xs @ ys|}
+The Pre =⇒ Inv and Inv ⇒ Post conditions are trivial. Loop invariant preser- vation proof requires we show:
+1. Vzs a b last ptr ys list j .
+[[ptr /= NULL; rev zs = rev list @ item j ·ys;
+(ptr '→g j ∧∗ list list (next j ) ∧∗ list ys last ) (lift-state (a, b))]]
+=⇒ (ptr '→g j (|next := last |) ∧∗
+list ys last ∧∗ list list (lift a (Ptr &(ptr→[ ''next''])))) (lift-state (heap-update (Ptr &(ptr→[ ''next''])) last a, b))
+This follows from Thm. 6.5. The first side-condition may be discharged with Thm. 6.4 and Thm. 6.7, eliminating the lift. The other side-conditions are dis- charged by rewrites installed during C translation for evaluating D.
+
+
+An interesting point in the proof is when we have to show:
+1. Vzs a b last ptr ys list j .
+[[ptr /= NULL; rev zs = rev list @ item j ·ys;
+(ptr '→g j ∧∗ list list (next j ) ∧∗ list ys last ) (lift-state (a, b))]]
+=⇒ j (|next := last |) = j (|next := field-update-ti TYPE(node ptr )τ (to-bytes0 last ) (next j )|)
+
+Here, applying the reverse definition of from-bytes and the α::mem-type axioms lifts the RHS to the HOL record level to simplify for the goal.
+Compared to our earlier in-place list reversal example [14], the proof script was about the same structure and size, 67 lines. In our experience, lifts and heap-updates can be reduced as above for type-safe C, freeing the user from this level of detail. However, a completeness result is not possible in this shallow treatment.
+
+Related work
+The idea to use separate heaps for separate pointer types and structure fields in Hoare logic goes back to Burstall [2]. On the abstract level, our multiple typed heaps formalisation is most closely related to Bornat [1] and Mehta and Nipkow’s [7] work in Isabelle, although we exploit Isabelle’s type inference in a different way. We ground this abstract and efficient reasoning in a detailed C semantics that is di- rectly applicable to concrete programs, and extend support to C’s structured types. Moy [8] has also developed a memory model for C structured types and a type hier- archy. This differs from ours as it is based on physical sub-typing [12] and the focus of the work is on translating well-behaved unions and casts to sub-typing instances. The Caduceus tool [3] supports Hoare logic verification of C programs, including the type-safe part of pointer arithmetic at this level. We increase the applicability of program verification drastically by supporting the unsafe part as well. Separa- tion logic [5,10] has been mechanised in theorem proving systems previously [15,6]. Again, we provide soundness for program verification by grounding these abstract, idealised models in a concrete semantics. We are able to support abstract separation logic notation and unsafe, low-level pointer manipulations at the same time.
+On the semantics front Norrish [9] presents a very thorough and detailed memory model of C and our formalisation has similarities to exploratory work on C++ [4]. Our model unifies these low-level semantics with the proof abstractions of the pre- vious paragraph.
+Conclusion
+In this paper we continued earlier work on pointer program verification in higher- order logic for C programs by providing extensions and generalisations resulting in a framework capable of fully exploiting C’s structured types. We presented a development that deeply embeds type structure information in the theorem prover and generic rules to describe type-safe updates in two common interactive proof abstractions — multiple-typed heaps and separation logic. With the former, we extended the earlier notion of heap independence to take into account a partial ordering of heap update dependency, and with the latter based the development on a heap state that allows for expressive assertions. Type-unsafe operations continue to be supported albeit at a proof cost.
+Future work includes providing support for C’s union types when they are well behaved, e.g. tagged unions, struct pointer casting in the case of physical sub-
+
+typing, development of Isabelle tactics for separation logic proofs and integration with automated tools and decision procedures.
+Acknowledgement
+We thank Gerwin Klein for discussions and for reading drafts of this paper.
+
+References
+Bornat, R., Proving pointer programs in Hoare Logic, in: R. Backhouse and J. Oliveira, editors,
+Mathematics of Program Construction (MPC 2000), LNCS 1837 (2000), pp. 102–126.
+Burstall, R., Some techniques for proving correctness of programs which alter data structures, in:
+B. Meltzer and D. Michie, editors, Machine Intelligence 7, Edinburgh University Press, 1972 pp. 23–50.
+Filliˆatre, J.-C. and C. March´e, Multi-prover verification of C programs, in: Formal Methods and Software Engineering, 6th International Conference on Formal Engineering Methods, ICFEM 2004, Seattle, USA, LNCS 3308 (2004), pp. 15–29.
+Hohmuth, M., H. Tews and S. G. Stephens, Applying source-code verification to a microkernel — the VFiasco project, Technical Report TUD-FI02-03-M¨arz, TU Dresden (2002).
+Ishtiaq, S. S. and P. W. O’Hearn, BI as an assertion language for mutable data structures, in: POPL ’01: Proceedings of the 28th ACM SIGPLAN-SIGACT symposium on Principles of programming languages (2001), pp. 14–26.
+Marti, N., R. Affeldt and A. Yonezawa, Verification of the heap manager of an operating system using separation logic, in: Third workshop on Semantics, Program Analysis, and Computing Environments For Memory Management (SPACE 2006), 2006, pp. 61–72.
+Mehta, F. and T. Nipkow, Proving pointer programs in higher-order logic, Information and Computation (2005), to appear.
+Moy, Y., Union and cast in deductive verification, in: C/C++ Verification Workshop, Oxford, UK, 2007.
+Norrish, M., “C formalised in HOL,” Ph.D. thesis, Computer Laboratory, University of Cambridge (1998).
+Reynolds, J. C., Separation logic: A logic for shared mutable data structures, in: Proc. 17th IEEE Symposium on Logic in Computer Science, 2002, pp. 55–74.
+Schirmer, N., “Verification of Sequential Imperative Programs in Isabelle/HOL,” Ph.D. thesis, Technische Universit¨at Mu¨nchen (2006).
+Siff, M., S. Chandra, T. Ball, K. Kunchithapadam and T. Reps, Coping with type casts in C, in: ESEC/FSE-7: Proceedings of the 7th European software engineering conference held jointly with the 7th ACM SIGSOFT international symposium on Foundations of software engineering (1999), pp. 180– 198.
+Tuch, H. and G. Klein, A unified memory model for pointers, in: G. Sutcliffe and A. Voronkov, editors, 12th International Conference on Logic for Programming Artificial Intelligence and Reasoning (LPAR- 12), LNCS 3835, 2005, pp. 474–488.
+Tuch, H., G. Klein and M. Norrish, Types, bytes, and separation logic, in: M. Hofmann and M. Felleisen, editors, Proceedings of the 34th ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages, Nice, France, 2007, p. 12.
+Weber, T., Towards mechanized program verification with separation logic, in: J. Marcinkowski and
+A. Tarlecki, editors, Computer Science Logic – 18th International Workshop, CSL 2004, Lecture Notes in Computer Science 3210 (2004), pp. 250–264.
+Wenzel, M., Type classes and overloading in higher-order logic, in: E. L. Gunter and A. Felty, editors,
+Theorem Proving in Higher Order Logics’97, LNCS 1275 (1997), pp. 307–322.

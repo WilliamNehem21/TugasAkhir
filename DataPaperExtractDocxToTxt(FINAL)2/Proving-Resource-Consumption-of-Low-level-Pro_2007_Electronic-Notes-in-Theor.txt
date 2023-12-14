@@ -1,0 +1,300 @@
+	Electronic Notes in Theoretical Computer Science 190 (2007) 133–147	
+www.elsevier.com/locate/entcs
+
+Proving Resource Consumption of Low-level Programs Using Automated Theorem Provers
+Jaroslav Sˇevˇc´ık 1 ,2
+Laboratory for Foundations of Computer Science School of Informatics, The University of Edinburgh Mayfield Road, Edinburgh EH9 3JZ, Scotland, UK
+
+Abstract
+In this paper we use a program logic and automatic theorem provers to certify resource usage of low-level bytecode programs equipped with annotations describing resource consumption for methods. We have adapted an existing resource counting logic [1] to fit the first-order setting, implemented a verification condition generator, and tested our approach on programs that contain recursion and deal with recursive data structures. We have successfully applied our framework to programs that did not involve any updates to recursive data structures. But mutation is more tricky because of aliasing of heap. We discuss problems related to this and suggest techniques to solve them.
+Keywords: Theorem provers, bytecode, resource-counting logic, verification condition generator, Grail
+
+
+Introduction
+Recent demand for higher security has spawned interest in more elaborate resource policies than memory safety or termination certification. An important example of such security policy is bounded memory consumption. Although there is a body of work in the area of type systems for resource consumption [11,7,6], there is little work so far on resource consumption certification that would exploit program logics combined with the power of fully automated theorem provers or decision procedures. In our work we explore the logical approach to proving and certifying resource consumption. Now that some automated provers are being equipped with ways to export their proofs we believe that this approach can provide us with explicit proofs of resource consumption, making the approach suitable for usage in proof-carrying code frameworks.
+
+1 Supported by Resource Quantification in e-Science Technologies project (ReQueST) funded by the UK EPSRC, grant EP/C537068.
+2 Email: j.sevcik@sms.ed.ac.uk
+
+1571-0661 © 2007 Elsevier B.V. Open access under CC BY-NC-ND license.
+doi:10.1016/j.entcs.2007.02.065
+
+In this paper we describe our framework and experiments for proving and certi- fying resource consumption of programs written in a subset of Java bytecode using program logics and automated theorem provers. Our initial motivation was to obtain certificates of memory consumption for low-level programs annotated with memory consumption on the level of methods. The annotations can be directly generated from the results of a static analysis for inferring heap space consump- tion of programs written in a high-level functional language called Camelot [17,13]. With the current state of the art in automated theorem proving this seems to be an easy way of obtaining the certificates in comparison with compiling into a typed assembly language and then generating the proofs from typing derivations.
+Our approach has been to take an existing resource counting logic for a subset of Java bytecode [1] and redesign it to be first-order. This is part of our methodology, in which we experiment with a meta-theory in an interactive proof tool with an expressive logic and then “extract” the theory to an efficient and automatic solu- tion. To express complex shape and size properties we have equipped the logic with the possibility of defining recursive predicates while guaranteeing consistency of the logic. Finally, we have implemented a verification condition generator for programs annotated with assertions on the level of methods and tested the framework on sev- eral examples using the Simplify decision procedure [8] as a prover back-end. We were able to prove resource consumption for possibly recursive programs on recur- sive data structures, which did not involve complicated reasoning about aliasing. This improves on the earlier work of Barthe et al. [3], which described a technique for proving memory consumption of simple programs without any recursive data structures. For programs involving updates of complicated data structures it is necessary to establish shape invariants to prove the resource properties. As general reasoning about reachability and aliasing is hard [10,12] we suggest an approxima- tion of reachability and simple verification condition transformations that allow us to prove shape properties of in-place list reversal algorithm.
+This paper is organised as follows. First, we will outline the language, the program logic and our axiomatisation in Sect. 2. Then, in Sect. 3, we will describe our verification condition generator and demonstrate a successful application to reasoning about running time in Sect. 4. In Sect. 5 we will discuss the problems arising when reasoning about programs with heap aliasing and suggest possible solutions to the difficulties. Sect. 6 concludes.
+
+Language and Program Logic
+Our work stems from the Mobile Resource Guarantees [17,20] project that inves- tigated application of proof-carrying code technology to certifying resource con- sumption of programs compiled from a high-level functional language with explicit memory management to a subset of Java bytecode. This subset can be viewed as a simple functional language, named Grail.
+In our work we have re-used the low-level Grail language and developed a first order variant of the program logic introduced in [1]. We will overview the language
+
+and the program logic in the following subsections.
+Grail Language
+Grail is a simple functional ML-like language. Just like in Java, a Grail program consists of classes, and the classes contain fields and methods. As opposed to Java, Grail method definitions consist of a trivial method body and local function definitions, which are needed to express looping constructs. Compared with full- blown functional languages, Grail is restrictive — among other limitations it does not support any polymorphism or higher order functions. All function calls must be tail-recursive, functions and function calls in one method must have the same actual and formal parameter list. These restrictions allow to compile a function call as a simple jump instruction in the Java bytecode, where the parameters correspond to local variables in current stack frame. This implies that the Java operand stack must be empty at each branch point, which trivially guarantees proper typing of the operand stack as required by the Java bytecode verifier. For a detailed discussion on Grail design refer to [1].
+In the syntax we use v for values, a for variables or values, top for test operators (comparisons), bop for binary operators (addition, etc.), t for base types and e for expressions. Note that class and field definitions are omitted from the syntax as their definition is completely standard.
+v ::= null | i	top ::= = | <> | <= | >=
+a ::= v | x	bop ::= add | sub | mul
+t ::= Int | Loc
+e ::= a | bop a a | new C | x.ft | x.ft := a | C.m(a¯) | call f | x.m(a¯)
+| let val x = e in e | let val () = e in e | if a top a then e else e
+
+For a running example of a Grail program see Fig. 1, which shows an implemen- tation of a class for single-linked lists with one method for determining the length of the list. Note that to pass different values of m and acc to the rev aux from the loop function it is necessary to declare variables of the same name and use them as parameters of the call of rev aux so that the parameter list for each function call is syntactically identical.
+Operational Semantics
+To formalise the language Grail we use a big-step operational semantics. The judge- ments of the operational semantics are in the form E ▶ h, e ⇓ h', v, ⟨c, s⟩. The judgement says that expression e in environment E and heap h evaluates to value v and heap h' consuming time c and heap space s.
+We model heaps as finite maps of type
+Loc →fin Cls × (IntFld → Int ) × (LocFld → Int )
+
+class List {
+field private List tail field private int head
+method public static int len(List l) =
+let val m = l	0:	aload_0; astore_1
+val acc = 0	2:	iconst_0; astore_2
+4:	goto 7 // the method’s "body"
+fun rev_aux (List m, int acc) =	7:	aload_1; aconst_null
+if m = null[List] then acc	8:	if_acmpeq 15
+else loop(m, acc)	12: goto 17
+15: aload_2; ireturn // then branch
+fun loop (List m, int acc) =	17: aload_2
+let val m = getfield m <List List.tail>	18: getfield <tail>; astore_1
+val acc = add acc 1	22: iload_2; iconst_1; iadd; istore_2 in rev_aux(m, acc) end	26: goto 7
+in rev_aux(m, acc) end	// <- see label 4
+}
+
+Fig. 1. Class List implementing a method returning length of the list.
+i.e. mapping locations to objects, where an object consists of a class name and a map from integer-type field names to integers and location-type field names to locations.
+We also define some basic operations on heaps — getfInt and getfLoc retrieve field values given a heap, a location and a field name, putfInt and putfLoc store a value into an object’s field in a given heap, freshloc(h) returns a location l such that l ∈/ dom(h). alloc updates a heap h with a new object of a given a class at the location freshloc(h) and typeof retrieves class name from a given heap and location. The types of the operations are summarised below.
+getft : Heap × Loc × tFld → t
+putft : Heap × Loc × tFld × t → Heap freshloc : Heap → Loc
+alloc : Heap × Cls → Heap typeof : Heap × Loc → Cls
+where t ∈ {Int, Loc}.
+To illustrate the rules of the operational semantics we show the rule of the operational semantics 3 for an invocation of method m of an object pointed to by x with parameters a¯.
+E⟨x⟩ = l	typeof (h, l)= C	{this '→ x; xi '→ ai}▶ h, bodyC,m ⇓ h1, v, ⟨c, s⟩ E ▶ h, x.m(a¯) ⇓ h1, v, ⟨(c + 3), s⟩
+The first two assumptions of the rule require that the value of x in environment E is a reference to location l pointing to an object of type C in heap h. Then the rule states that evaluating x.m(a¯) in heap h and environment E results in the same value v and heap h1 as evaluating the body of method C.m in heap h in an environment,
+
+3 The readers interested in all the rules of Grail may refer to [25, Appendix A].
+
+which is constructed as a mapping from formal parameters to the actual parameters and mapping the variable this to value of x in the caller’s environment. Moreover, it consumes the same amount of space s and takes 3 more units of time.
+Grail Program Logic
+We have based our program logic on the original program logic for Grail [1]. How- ever, we could not use it verbatim since it uses higher-order logic as the language of assertions. The main change in our logic is replacing the explicit environment in the assertions of the original logic by substitutions in our logic.
+The judgements of the program logic are in the form Γ D e : φ, where Γ isa set of assertions of the form e : φ, e is a Grail expression, and φ is a first-order sorted logic assertion. The variables in e may not contain free variables h, c, s or v or any of their primed/indexed counterparts. The sorts of the logic are heaps (Heap), integers (Int), heap locations (Loc), field names for integers (IntFld), field names for locations (LocFld) and class names (Cls). Each free variable of φ may be either:
+a free variable of the expression e of the appropriate sort, i.e. of sort Int if it is a variable of type int, or of sort Loc otherwise;
+h or h' of sort Heap, denoting the initial and final heaps;
+c or s of sort Int, denoting the time and space consumption;
+v if the expression e is not of type void. The sort of the variable v must be Int
+if e is of type int, Loc otherwise, i.e. when the type of e is a reference.
+For an expression e and a formula φ such that fv(φ) ⊆ fv(e) ∪ {h, h', v, c, s} the informal meaning of e : φ is the following — for all h, h', v, c,s and all assignments to the free variables of e if e is executed in the heap h and results into the value v and the heap h' consuming time c and space s then φ holds. Note that our logic is a logic of partial correctness — it does not describe non-terminating executions. The formal definition of validity follows.
+Definition 2.1 (Validity) Assertion A is valid for e, written |= e : A, if for all environments E, heaps h, h', values v of the appropriate base type and integers c, s
+E ▶ h, e ⇓ h', v, ⟨c, s⟩	implies	A[E¯⟨x¯⟩/x¯]
+where A[E¯⟨x¯⟩/x¯] is formula A with all free occurrences of each free variable xi of e
+replaced by the value E⟨xi⟩ from the environment E.
+We illustrate the logic on several interesting rules now 4 . The first rule describes the effect of allocating a new object:
+
+Γ D new C : v = freshloc(h) ∧ h' = alloc(h, C) ∧ c =3 ∧ s =1 
+
+4 The remaining inference rules for the logic are in [25, Appendix B]. The logic uses built-in predicates putf, getf, freshloc, alloc and typeof, which are axiomatised in [25, Appendix C].
+
+The resulting value of the allocation will be a fresh location in the heap, the new heap will be the same as the original, except the new object allocated at the fresh location. The allocation also consumes 3 units of time and 1 unit of heap space — for simplicity we only count number of objects.
+The most complicated rule is the one for virtual method invocation.
+
+∀C ∈ Cls. Γ ∪ {(x · m(a¯), A[a¯/p¯, x/self ])} D bodyC,m : A[parsC,m/p¯, c + 3/c] fv(A) ⊆ {p1,... , p|a¯|, h, h', v, c, s}
+Γ D x · m(a¯): A[a¯/p¯, x/self ]
+The rule says that if we can come up with a specification A of a method invoca- tion x · m(p¯) such that using the specification for recursive calls we can prove that every method body m obeys A with resources decreased by the amount consumed by the invocation itself then our method invocation indeed fulfils the specification A, provided that we replace p¯ with the actual parameters. Note that we need to prove the assertion for every method body with name m since we don’t know the runtime type of the callee. We have proved soundness of the logic.
+Theorem 2.2 (Soundness) If Γ D e : A then Γ |= e : A.
+Proof. Following a modified version of proof from [1], for details refer to [25, Ap- pendix D].	 
+
+Verification Condition Generator for Grail
+We have extended the Grail language to accommodate assertions on the method and function level and changed the existing Grail compiler to parse the annotated Grail programs and generate verification conditions in the Simplify format [8]. The verifi- cation conditions state that the assertion inferred by the rules of our program logic imply the specified assertion for each method body and function body. Moreover, the verification condition generator supports definition of well-founded predicates described below in Sect. 3.0.1 and generates axioms for the predicates. We also implement a simple procedure for instantiation of existential quantifiers that trans- forms all subformulae of the form ∃x.x = t ∧ A to A[t/x], provided that x is not free in t. This eliminates most quantifiers introduced by the rule for let 5 .
+In the translation to obligations we delete the sorts for heaps, locations and integers. For the sorts for fields and classes we use the standard translation from sorted to unsorted logics using predicates for sorts. Some non-theorems 6 in the sorted logic can become theorems when the sorts are deleted. However, Bouillaguet
+
+5 However, note that this technique can blow up the size of the formula exponentially, e.g. the generated specification of the program let val x1 = x*x .. . val xn = xn−1*xn−1 in xn end will result into an assertion of size Ω(2n ).
+6 For example, the existence of heap, i.e. ∃h : Heap.h = h cannot be proved from the axioms of our sorted logic, but it is a theorem in the unsorted one.
+
+et al. [4] have shown that the theorems introduced by the translation are valid in all structures that are models for our axioms if the universes for the sorts of heaps, locations and integers have the same cardinality. This requirement is naturally satisfied in all sensible models of heaps — integers, locations and heaps are expected to be infinite countable sets. Moreover, any proof in the sorted logic is also a proof in the unsorted logic, hence all translated theorems from the sorted logic are theorems in the unsorted logic. In this sense, the translation is sound and complete.
+Axiomatisation.
+We assume that the underlying prover has some built-in notion of integers. This is realistic assumption for satisfiability modulo theories [2] decision procedures. First- order theorem provers will require some additional approximation of axioms for integers.
+The axiomatisation of field names and class names specifies the constants for field/class names to be distinct and each value of sort field/class must be equal to one of the constants. The heap is axiomatised in a way similar to axiomatising arrays, using 12 axioms for all the combinations of our constructors and destructors of heaps and 2 axioms for freshness of freshloc. The following three axioms show the behaviours of the combination of typeof destructor with alloc constructor and the combination of typeof with putf.
+
+typeof(putft(h, l, f, d), k)= typeof(h, k) typeof(alloc(h, C), freshloc(h)) = C
+k /= freshloc(h) −→ typeof (alloc(h, C), k)= typeof(h, k)
+The axioms are consistent because we can construct a simple model for the axioms, for example the concrete implementation of heaps from [1] is a model for the theory.
+Well-founded predicates.
+Because first-order provers accept any axioms we need a principled way to capture recursive definitions. The natural way to describe aliasing of recursive data struc- tures like lists or trees is to use reachability. However, the straightforward definition of reachability is recursive and an axiom having the same predicate on both sides of an equivalence can make the theory inconsistent.
+We ensure consistency by using well-foundedness of natural numbers – we allow only recursive definitions of new predicates in the form
+p(x¯, n) ≡ (n =0 ∧ A(x¯)) ∨ (n > 0 ∧ B(x¯, n))
+where the formula A cannot contain any occurrence of the predicate p and the formula B can only contain occurrences of p in the form p(y¯, n − 1), where y¯ is a vector of the same size as x¯ and n is not quantified in B. We use the natural
+
+numbers because there are many decision procedures that can deal with arithmetic efficiently.
+It is easy to see that if the original theory had a model, we can extend the model to the theory with this new axiom added. Therefore, the theory with the definition added remains consistent.
+This allows for an easy definition of reachability.
+reach(h, x, y, n) ≡ (n =0 ∧ x = y) ∨
+∨ (n > 0 ∧ x /= null ∧ ∃f. reach(h, getf Loc(h, x, f ), y,n − 1))
+Experiments with Time Consumption
+The first results are encouraging — using our approach we are able to prove time consumption of simple recursive programs. In the example below we show a manu- ally annotated version of the method for computing the length of a list from Fig. 1. The program illustrates reasoning about recursive data structures using the well- founded predicates to describe a list of length n. This allows us to assert that the static method len for computing the length of the list runs in linear time with respect to the length of the supplied list.
+field private List tail field private int head
+predicate is_list(heap h, List l, int n) = (n = 0 && l = null) ||
+(n > 0 && typeof(h, l) = <class List> &&
+is_list(h, getfieldL(h, l, <field tail>), sub(n, 1)))
+end
+assert \forall int n . is_list(\heap, l, n) ->
+\clock<add(100, mul(n, 100)) in method public static int len(List l) =
+let val m = l	val acc = 0
+assert \forall int n . is_list(\heap, m, n) ->
+\clock < add(50, mul(n, 100)) in fun rev_aux (List m, int acc) =
+if m = null[List] then acc else loop(m, acc)
+assert !(m = null) -> \forall int n . is_list(\heap, m, n) ->
+\clock < mul(n, 100) in
+fun loop (List m, int acc) = let
+val m = getfield m <List List.tail> val acc = add acc 1
+in rev_aux(m, acc) end
+in rev_aux(m, acc) end
+The example has one method and two functions, which results into three verifi- cation conditions. For an illustration of a verification condition we show the proof obligation for the loop method. At first our generator computes a specification of loop using the rules of the program logic (we omit space consumption and some trivially eliminated quantifiers from the specification).
+Specloop(h, h', v, c, s, m, acc) ≡
+∃c1. (∃c2. (∃c3. (∀n. is list(h, getf (h, m, ⟨tail⟩), n) −→ c3 < 50 + 100 n) ∧
+∧ c2 = c3 + 1) ∧ c1 =3 + c2) ∧ c =2 + c1 +2 
+
+The verification condition for loop then requires this to imply the annotated asser- tion:
+Specloop (h, h', v, c, s, m, acc) −→
+−→ (m /= null −→ (∀n. is list(h, m, n) −→ c < 100 n))
+for all h, h', v, c, s, m and acc.
+The obligations are proved by Simplify in a fraction of a second. It seems likely that this example would extend to other cases where recursion pattern matches the definition of the predicate, such as proving running time of a search in a binary tree of bounded height. We have successfully applied our technique to other simple examples, such as multiplying integers using only addition.
+
+Proving Space Consumption Using Free List
+The story changes significantly if our aim is to prove memory consumption of pro- grams containing recursive data structures with updates.
+In our work we have adopted the approach taken by the Camelot language [17], which is a high level ML-like language with a type system that ensures linear heap space consumption. The essence of the Camelot language type system lies in bounding the minimal length of the free list of memory cells by a weighted sum of cells in input and output data structures for each function, where the weights are encoded into types of the function’s parameters and result. The programmer is provided with a facility for freeing memory explicitly. The freed memory is stored in the free list for later usage. The reasoning about space consumption then amounts to reasoning about the length of the free list.
+Generally, for reasoning about the length of the free list we need to preserve an important invariant — the free list must remain acyclic. To preserve the acyclicity every call to move to free list(x) has to guarantee that the reference x is not a member of the free list. In Camelot, a linear type system is used to ensure that each memory cell is freed at most once. In our approach we need to assume such a layout of input parameters of methods that would imply preserving acyclicity of the free list.
+We have chosen the in-place list reversal program to test our logic. See Fig. 2 for an implementation of the algorithm in Camelot. The program seems to be just like in Caml, it differs only in the explicit memory management. The !Nil construct means that the value Nil will be represented by null pointer and thus it will not consume any memory. The pattern Cons(x, t)@ instructs the compiler to free the memory used by the pattern. The memory will be then reused by the Cons that will become the head of the new accumulator. Hence the program does not use any additional memory, which is what the tool designed by Jost [13] infers.
+When the Camelot code in Fig. 2 compiles into a Grail bytecode program it is necessary that we preserve the information about the acyclicity of all variables that represent lists in Camelot. If the acyclicity is not preserved then we could get a
+
+type ilist = !Nil | Cons of int * ilist
+
+let reverse m acc = match m with Nil	-> acc
+| Cons(x, t)@_ -> rev t (Cons(x, acc))
+Fig. 2. In-place destructive list reversal in Camelot.
+
+class List {
+predicate nreach(heap h, List l, List k, int n) = (n = 0 && l = k) ||
+(n > 0 && l <> null && typeof(h, l) = <class List> && nreach(h, getfieldL(h, l, <field tail>), k, sub(n, 1))) end
+predicate reach(heap h, List l, List k) =
+\exists int n . nreach(h, l, k, n) end
+predicate acyclic(heap h, List l) =
+\forall List k . k <> null && reach(h, l, k) ->
+! reach(h, getfieldL(h, k, <field tail>), k) end
+predicate separated(heap h, List l1, List l2) =
+\forall List k . k = null || ! reach(h, l1, k) || ! reach(h, l2, k) end
+field private List tail field private int head
+assert acyclic(\heap, l) -> acyclic(\newheap, \result) in method public static List reverse(List l) =
+let val acc = null[List] val m = l
+assert acyclic(\heap, m) && acyclic(\heap, acc) && separated(\heap, m, acc) -> acyclic(\newheap, \result) in
+fun rev_aux (List m, List acc) = if m = null[List] then acc else loop(m, acc)
+assert m <> null && acyclic(\heap, m) && acyclic(\heap, acc) && separated(\heap, m, acc) -> acyclic(\newheap, \result) in
+fun loop (List m, List acc) =
+let val h = getfield m <int List.head> val t = getfield m <List List.tail>
+val () = putfield m <List List.tail> acc val acc = m
+val m = t
+in rev_aux(m, acc) end
+in rev_aux(m, acc) end
+}
+
+Fig. 3. Annotated list reversal algorithm in Grail.
+
+cycle in the free list if we try to free the list later. Since our reasoning is modular we do not know whether the list will be freed, thus we need to be conservative and guarantee the acyclicity of the result 7 . Moreover, we must ensure separation of m and acc, otherwise reverse returns a “list” with a cycle. When we add these assertions to the compiled Grail code we obtain the program in Fig. 3.
+Running our generator on the code will provide three verification conditions — the ones for the reverse method and the rev aux function are trivial and they are easily proved by a theorem prover. However, the verification condition for the loop function needs to describe the effects of the heap cell mutation. Below is the
+
+7 These conditions are necessary, but they are not sufficient for modular reasoning. To make the specifica- tion usable we would need to establish frame condition as well — everything that is not reachable from m remains unchanged. We omit the frame condition as its treatment is not very different from the acyclicity.
+
+inferred specification of loop.
+Specloop(h, h', v, c, s, m, acc) ≡
+∃h0. h0 = putf(h, m, ⟨tail⟩, acc) ∧
+(acyclic(h0, getf (h, m, ⟨head⟩)) ∧ acyclic(h0, m) ∧
+separated(h0, getf (h, m, ⟨head⟩), m) −→ acyclic(h', v)) The verification condition for loop requires that
+Specloop (h, h', v, c, s, m, acc) −→
+m /= null ∧ acyclic(h, m) ∧ acyclic(h, acc) ∧
+separated(h, m, acc) −→ acyclic(h', v)
+
+for all h, h', v, c, s, m and acc.
+As is well-known we need induction even for proving simple statements like that a change of a memory location x not contained in a list l does not affect acyclicity of the list l. In our language of assertions this translates to acyclic(h, l) ∧
+¬reach(h, l, x) −→ acyclic(putf(h, x, f, v), l). Note that this happens for a simple operation like cons h l — we allocate a memory cell that is not in l and then update its head to h and its tail to l. Therefore, it is not surprising that the proof of the verification condition for loop needs to establish that the new m and acc remain acyclic and separated in the mutated heap using induction. This will then guarantee acyclicity of the result by the specification of rev aux.
+Resolution based theorem provers such as SPASS [27] or Otter [18] have no knowledge of integers and cannot instantiate induction, so they obviously fail to establish the obligation — it is not even provable in their logics. Although decision procedures have built-in knowledge of arithmetic they are much less powerful if we combine arithmetic with quantifiers, uninterpreted functions and uninterpreted predicates. As a result, neither Simplify [8] nor Harvey [9] can prove the obligations as they are generated.
+In the following we will describe simplifications that we have performed by hand to make the obligations provable using these theorem provers. The first two steps could be automated easily, the last one still needs more work, but we believe it’s promising future research. Observe that the alias change happens during the putf statement and the property we need to prove our obligation is
+D m.tail := acc :
+acyclic(h, m) ∧ acyclic(h, acc) ∧ separated(h, m, acc)
+−→ acyclic(h', m) ∧ acyclic(h', getf (h, m, ⟨tail⟩))
+∧separated(h', m, getf (h, m, ⟨tail⟩))
+In the following we have concentrated on proving this property.
+
+Replace inductive definitions with instantiation of induction.
+None of the theorem provers used in our experiments is capable of instantiating induction automatically — all the provers that we have used accept a finite number of axioms, hence the induction has to be instantiated explicitly for them. Proving several programs by hand suggested the following useful instantiations.
+reach(h, k, l) ≡ k = l ∨ (k /= null ∧ reach(h, getf(h, k, tail), l))	(1)
+reach(h, x, y) ∧ reach(h, y, z) −→ reach(h, x, z)	(2)
+(∀k.getf(h, k, tail)= getf(h', k, tail) ∨ k = l) ∧ reach(h, a, b)
+
+−→ reach(h', a, b) ∨ (reach(h', a, l) ∧ reach(h', getf(h, l, tail), b)))
+(∀k.getf(h, k, tail)= getf(h', k, tail) ∨ k = l) ∧ ¬reach(h, a, b)
+−→ ¬reach(h', a, b) ∨ reach(h', a, l)
+(3)
+
+(4)
+
+Equation (1) defines reachability in a standard way, (2) postulates transitivity of reachability, (3) and (4) axiomatise behaviour of reachability after heap change. Using these instantiations as axioms the verification condition becomes provable in first order logic.
+
+Remove the sort for field names and unfold non-recursive predicates.
+In the logic, there is the sort of fields, that has only finite number of values. This introduces additional axioms and increases arity of the getf and putf predicate, which appears to increase the search space for the provers. Moreover, axiomatising non-recursive definitions of predicates, such as the ones of separated and acyclic in Fig. 3, makes the definitions available for both folding and unfolding, although we only need to unfold them. By replacing fields by specialised versions of getf and putf function symbols and by unfolding the non-recursive predicates we can make the obligations for list reversal become provable for SPASS 8 ; however, relatively long times for proofs even for this simple example suggest that this is close to the limits of SPASS. Note that for resource counting it is highly desirable to be able to handle aliasing with the decision procedures because of the built-in arithmetic, which is lacking in the traditional automated theorem (SPASS, Otter and others), where it must be axiomatised separately, typically using Robinson arithmetic and instantiating induction for important properties — commutativity, associativity and others.
+
+Eliminate the explicit heap variable.
+From the counterexamples provided by Simplify it appears that it has difficulties with reasoning about the explicit heaps. Since our obligation for putf only contains heaps h and h', we can replace the predicates reach and getf with two versions without the explicit heap representing the predicates in h and the other one in h'. We will also need to introduce axioms to describe the relationship of the predicates
+
+8 See [25, Appendix D.1] for the transformed obligation.
+
+in h and h'. In our case of obligation for putf predicate we can use the array-like select-store axioms for putf and getf to describe relationship of the two versions of getf. To capture the reach predicates we will use the axiom for effects of putf on reachability. The verification condition transformed this way 9 is provable by both Simplify and Harvey. Although we have not tested the approach on other verification conditions, we believe we could handle more complex obligations by eliminating all existentially quantified explicit heaps using a similar approach we have used for eliminating h and h'.
+
+Conclusion
+In our work we have applied logical methods to proving resource properties of low- level code. Using program logics and automated reasoning tools for proving resource consumption of programs seems to be practical for programs that do not use mutable data structures, but the direct approach attempted here fails in their presence. The reason for that is the inability of current theorem provers to use induction. However, even if we provide instances of the induction scheme as axioms to the provers the obligations for simple programs the obligations still appear to be too difficult for the provers. We have experimented with transformations of the generated verification conditions to make them provable by first order theorem provers. Using several simple transformations we were able to prove shape properties of the in-place list reversal algorithm, which is necessary for proving its memory consumption. Despite this progress it is hard to scale to more complicated examples.
+A similar approach to ours was used in [3] to prove memory consumption of simple programs with no recursive data structures involved. As opposed to our technique, they have used ghost variables to describe memory usage in a Hoare-like program logic for bytecode [5]. Their work does not discuss treatment of programs involving recursive data structures and aliasing at all.
+There are several other alternatives to our approach. Nguyen, David, Qin and Chin [22] apply separation logic to prove size and shape properties using a cus- tom decision procedure based on folding and unfolding of recursive predicates, de- signed similarly to our well-founded predicates. By the usage of folding/unfolding in separation logic they neatly avoid the necessity of proving frame conditions using induction.
+To handle shape analysis using logical tools [16] employs first-order theorem provers in combination with heuristics for instantiation of an induction scheme. Similar work of Lahiri and Qadeer [15] uses a decision procedure and several fixed instantiations of an induction scheme to prove shape properties of possibly cyclic data structures. We improve on their work by considering resources, their induction scheme is expressible using our well-founded predicates and the induction scheme for natural numbers. Interesting results in shape analysis were obtained by using limited, but decidable logics [28,21]. It is still an open question how to combine such logic with resources. It was suggested to us that Kuncak and Rinard [14] combine
+
+9 The transformed verification condition is in [25, Appendix D.2].
+
+several logical approaches, including interfacing a first order theorem prover [4], to prove full correctness of data structure implementations. Although their tool Jahob cannot prove resource consumption, it would be interesting to use their techniques to reason about resources.
+Meng and Paulson [19] utilise first-order theorem provers to prove typed theo- rems. This might seem to solve our problems instantly. However, their translation does not address the most difficult problem – the instantiation of induction schemes. Moreover, the authors admit that the significant number of axioms generated by the translation causes serious problems to current generation of first-order provers. We believe that specialised translation achieves significantly better results than this generic translation.
+Another alternative is using type systems, such as [7,6,11] to guarantee the re- source consumption. The type-theoretic approach suffers from similar problems as the logical one as it must describe aliasing of the heap as well, e.g. using [26]. The difference is in the price paid – the cost of using logical methods is undecidability whereas type systems for resources must limit the language considerably to be able to preserve aliasing invariants. Our experience shows that the cost of using theorem provers might still be too high in comparison to programming in a constrained lan- guage. This also applies to proof-carrying code setting — it appears to be easier to produce proofs from typing derivations than to reconstruct them from annotations on method level, at least with the present state of fully automated verification. We believe that shape-related problems, such as the ones presented in our work, should be part of the benchmarks for theorem provers and decision procedures [24,23] to encourage further development of the prover technology.
+
+References
+Aspinall, D., L. Beringer, M. Hofmann, H.-W. Loidl and A. Momigliano, A program logic for resource verification, in: Proceedings of 17th International Conference on Theorem Proving in Higher Order Logics (TPHOLs2004), Lecture Notes in Computer Science 3223 (2004), pp. 34–49.
+Barrett, C., L. de Moura and A. Stump, Design and results of the first satisfiability modulo theories competition (SMT-COMP 2005), Journal of Automated Reasoning (2006).
+Barthe, G., M. Pavlova and G. Schneider, Precise analysis of memory consumption using program logics, in: SEFM ’05: Proceedings of the Third IEEE International Conference on Software Engineering and Formal Methods (2005), pp. 86–95.
+Bouillaguet, C., V. Kuncak, T. Wies, K. Zee and M. Rinard, Using first-order theorem provers in the Jahob data structure verification system, in: B. Cook and A. Podelski, editors, Proceedings of the 8th International Conference on Verification, Model Checking, and Abstract Interpretation (VMCAI 2007, Nice, January 14-16), Lecture Notes in Computer Science 4349 (2007).
+Burdy, L. and M. Pavlova, Java bytecode specification and verification, in: SAC ’06: Proceedings of the 2006 ACM symposium on Applied computing (2006), pp. 1835–1839.
+Chin, W.-N., H. H. Nguyen, S. Qin and M. C. Rinard, Memory usage verification for OO programs., in:
+C. Hankin and I. Siveroni, editors, SAS, Lecture Notes in Computer Science 3672 (2005), pp. 70–86.
+Crary, K. and S. Weirich, Resource bound certification, in: Proceedings of the Symposium on Principles of Programming Languages, Boston, Massachusetts, 2000, pp. 184–198.
+Detlefs, D., G. Nelson and J. B. Saxe, Simplify: a theorem prover for program checking, J. ACM 52
+(2005), pp. 365–473.
+
+Fontaine, P., “Techniques for verification of concurrent systems with invariants,” Ph.D. thesis, Institut Montefiore, Universit de Lige, Belgium (2004). URL http://haRVey.loria.fr
+
+Gr¨adel, E., M. Otto and E. Rosen, Undecidability results on two-variable logics, in: STACS ’97: Proceedings of the 14th Annual Symposium on Theoretical Aspects of Computer Science (1997), pp. 249–260.
+Hofmann, M. and S. Jost, Static prediction of heap space usage for first-order functional programs, in: Proceedings of the 30th ACM Symposium on Principles of Programming Languages, ACM SIGPLAN Notices 38 (2003), pp. 185–197.
+Immerman, N., A. Rabinovich, T. Reps, M. Sagiv and G. Yorsh, The boundary between decidability and undecidability for transitive-closure logics, in: J. Marcinkowski and A. Tarlecki, editors, 18th International Workshop CSL 2004, Lecture Notes in Computer Science 3210 (2004), pp. 160–174.
+Jost, S., lfd infer: an implementation of a static inference on heap space usage, in: SPACE 2004: Proceedings of the Second Workshop on Semantics, Program Analysis, and Computing Environments for Memory Management, 2004.
+Kuncak, V. and M. Rinard, An overview of the Jahob analysis system: Project goals and current status, in: NSF Next Generation Software Workshop, 2006.
+Lahiri, S. K. and S. Qadeer, Verifying properties of well-founded linked lists, in: POPL ’06: Conference record of the 33rd ACM SIGPLAN-SIGACT symposium on Principles of programming languages (2006), pp. 115–126.
+Lev-Ami, T., N. Immerman, T. W. Reps, S. Sagiv, S. Srivastava and G. Yorsh, Simulating reachability using first-order logic with applications to verification of linked data structures., in: R. Nieuwenhuis, editor, CADE, Lecture Notes in Computer Science 3632 (2005), pp. 99–115.
+MacKenzie, K. and N. Wolverson, Camelot and Grail: resource-aware functional programming on the JVM, in: Trends in Functional Programming, Volume 4, Trends in Functional Programming 4 (2004),
+pp. 29–46.
+McCune, W. W., “OTTER 3.0 Reference Manual and Guide,” (1994).
+URL citeseer.ist.psu.edu/mccune94otter.html
+
+Meng, J. and L. C. Paulson, Experiments on supporting interactive proof using resolution., in: D. A. Basin and M. Rusinowitch, editors, IJCAR, Lecture Notes in Computer Science 3097 (2004), pp. 372–384.
+Mobile Resource Guarantees web (2004), http://groups.inf.ed.ac.uk/mrg .
+Møller, A. and M. I. Schwartzbach, The pointer assertion logic engine, in: PLDI ’01: Proceedings of the ACM SIGPLAN 2001 conference on Programming language design and implementation (2001),
+pp. 221–231.
+Nguyen, H. H., C. David, S. Qin and W.-N. Chin, Automated verification of shape and size properties via separation logic, in: B. Cook and A. Podelski, editors, Proceedings of the 8th International Conference on Verification, Model Checking, and Abstract Interpretation (VMCAI 2007, Nice, January 14-16), Lecture Notes in Computer Science 4349 (2007).
+Ranise, S. and C. Tinelli, The Satisfiability Modulo Theories Library (SMT-LIB), www.SMT-LIB.org
+(2006).
+Sutcliffe, G. and C. Suttner, The TPTP problem library, J. Autom. Reason. 21 (1998), pp. 177–203.
+Sˇevˇc´ık, J., Proving resource consumption of low-level programs using automated theorem provers (2007), full version of this paper. URL http://homepages.inf.ed.ac.uk/s0566973/papers/fospacefull.pdf
+
+Walker, D. and J. G. Morrisett, Alias types for recursive data structures, in: TIC ’00: Selected papers from the Third International Workshop on Types in Compilation (2001), pp. 177–206.
+Weidenbach, C., U. Brahm, T. Hillenbrand, E. Keen, C. Theobalt and D. Topiˇc, SPASS version 2.0, in:
+A. Voronkov, editor, Automated deduction, CADE-18 : 18th International Conference on Automated Deduction, Lecture Notes in Artificial Intelligence 2392 (2002), pp. 275–279.
+Yorsh, G., A. M. Rabinovich, M. Sagiv, A. Meyer and A. Bouajjani, A logic of reachable patterns in linked data-structures., in: L. Aceto and A. Ing´olfsd´ottir, editors, FoSSaCS, Lecture Notes in Computer Science 3921 (2006), pp. 94–110.

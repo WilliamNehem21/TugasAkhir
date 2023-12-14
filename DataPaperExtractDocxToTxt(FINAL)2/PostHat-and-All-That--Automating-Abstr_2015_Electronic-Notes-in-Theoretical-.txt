@@ -1,0 +1,606 @@
+Available online at www.sciencedirect.com
+
+
+Electronic Notes in Theoretical Computer Science 311 (2015) 15–32
+www.elsevier.com/locate/entcs
+
+PostHat and All That: Automating Abstract Interpretation
+A. Thakur a,1, A. Lal b,2, J. Lim c,3, and T. Reps a,c,4
+a Computer Sciences Department, Univ. of Wisconsin; Madison, WI; USA
+b Microsoft Research India; Bangalore; India
+c GrammaTech, Inc.; Ithaca, NY; USA
+
+Abstract
+Abstract interpretation provides an elegant formalism for performing program analysis. Unfortunately, designing and implementing a sound, precise, scalable, and extensible abstract interpreter is difficult. In this paper, we describe an approach to creating correct-by-construction abstract interpreters that also attain the fundamental limits on precision that abstract-interpretation theory establishes. Our approach requires the analysis designer to implement only a small number of operations. In particular, we describe a systematic method for implementing an abstract interpreter that solves the following problem:
+Given program P , and an abstract domain A, find the most-precise inductive A-invariant for P .
+Keywords: abstract interpretation, invariant generation, symbolic abstraction, decision procedures
+
+
+Introduction
+Computing invariants via static program analysis is crucial when proving correctness of programs. For the analysis to be tractable, the language of invariants is restricted. In particular, an abstract domain is used to specify the program properties that are observable. Consequently, the program analysis works on an abstraction of a program, which over-approximates the original program’s behavior. As long as the abstract semantics is an over-approximation of the concrete semantics of the
+
+1 Email: adi@cs.wisc.edu
+2 Email: akashl@microsoft.com
+3 Email: junghee@grammatech.com
+4 Email: reps@cs.wisc.edu
+5 Supported, in part, by NSF under grant CCF-0904371; by ONR under grants N00014-{09-1-0510, 11-C- 0447}; by AFRL under contract FA8650-10-C-7088; and by DARPA under cooperative agreement HR0011- 12-2-0012. Any opinions, findings, and conclusions or recommendations expressed in this publication are those of the authors, and do not necessarily reflect the views of the sponsoring agencies.
+
+http://dx.doi.org/10.1016/j.entcs.2015.02.003
+1571-0661/© 2015 The Authors. Published by Elsevier B.V.
+This is an open access article under the CC BY license (http://creativecommons.org/licenses/by/4.0/).
+
+program, the program properties inferred describe a superset of the states that can actually occur, and can be used as invariants.
+The theory underlying this approach is called abstract interpretation [3]. Un- fortunately, abstract interpretation has a well-deserved reputation of being a kind of “black art”, and building sound, precise, scalable, and extensible analyzers is often a difficult process. This paper describes techniques that can lessen the bur- den on analysis designers. When they are applicable, the techniques presented in this paper address a long-standing open question—namely, how to raise the level of automation in abstract interpretation. Moreover, they provide help along all of four of the dimensions mentioned above:
+soundness: They provide a way to create analyzers that are correct-by-construction, while requiring an analysis designer to implement only a small number of oper- ations. Consequently, each instantiation of the approach only relies on a small “trusted computing base”.
+precision: Unlike most conventional approaches to creating analyzers, our tech- niques achieve the fundamental limits of precision that abstract-interpretation theory establishes.
+scalability: A key primitive that we use can be implemented as an “anytime” algorithm—i.e., the algorithm can be equipped with a monitor, and if too much time or space is being used, the algorithm can be stopped at any time, and a safe (over-approximating) answer returned. By this means, when the an- alyzer is applied to a suite of programs that require successively more analysis resources to be used, precision can degrade gracefully.
+extensibility: If an additional abstract domain is added to an analyzer to track ad- ditional information, the reduced product [4, §10.1] can be obtained automat- ically [33, §6]. That is, information will be exchanged automatically between domains to produce the most-precise abstract values in each domain.
+Let C be the concrete domain that describes the collecting semantics of the program. For a concrete transformer τ , let Post[τ ] : C → C denote the operator that applies the concrete transformer. A set of invariants {Ik} are said be inductive with respect to a set of transformers {τij} if, for all i and j, Post[τij]([[Ii]]) ⊆ [[Ij]], where [Ik]] ∈ C denotes the meaning of Ik. The choice of a particular abstract domain A fixes a limit on the precision of the invariants identified by an analysis. If {Ik} ⊆ A, then {Ik} is said to be an inductive A-invariants. (For brevity, we also refer to a single member Ij of {Ik} as an inductive A-invariant.) Furthermore, a most-precise inductive A-invariant exists: Post[τ ] is monotonic in C; given two A-invariants, we can take their meet; thus, provided A is a meet semi-lattice, the most-precise inductive A-invariant exists. 6
+As discussed in this paper, finding the most-precise inductive A-invariant is attainable when A meets certain properties. Formally, suppose that one has a
+γ
+Galois connection C −→−−−−→− A between concrete domain C and abstract domain A.
+For a concrete transformer τ , let Post[τ ] : A → A be the most-precise abstract
+
+6 On the other hand, computing the most precise A-invariant at a program point, defined as the abstraction of the collecting semantics at that point, is generally infeasible.
+
+operator possible. The following observation states how the most-precise inductive
+A-invariant can be computed:
+Observation 1 Let program P consist of (i) nodes N = {ni} with enter node n1,
+(ii) edges EP = {ni → nj}, and (iii) a concrete-state transformer τi,j associated with each edge ni → nj. Let A be an abstract domain. The best inductive invariant (BII) for P that is expressible in A is the least ﬁxed-point of the equation system
+V1 = a1	Vj = .ni→nj ∈EP Pˆost[τi,j](Vi),	(1)
+where a1 is the best value in A that over-approximates the set of allowed input states at the enter node n1.
+As a corollary of Obs. 1, we have
+Observation 2 When the least solution to Eqn. (1) can be obtained algorithmically, e.g., by Kleene iteration in an abstract domain with no inﬁnite ascending chains, the BII problem reduces to the problem of applying Post.
+Unfortunately, the theory of abstract interpretation does not provide a useful algo- rithm for applying Post[τ ] given the concrete transformer τ . Post can be expressed in terms of α, γ, and Post[τ ], as follows [4]:
+Post[τ ]= α ◦ Post[τ ] ◦ γ.	(2)
+However, in most cases, the application of γ to an abstract value in Eqn. (2) would yield an intermediate result—a set of concrete states—that is either infinite or too large to fit in computer memory.
+In practice, analysis designers typically give up on Eqn. (2)—thereby giving up on attaining the best inductive A-invariant—and manually write, for each concrete operation, an abstract transformer that satisfies the weaker condition
+Post [τ ] ± α ◦ Post[τ ] ◦ γ.	(3)
+Consequently, in practice, an analysis designer needs to manually write the abstract transformers for each concrete operation. This task can be tedious and error-prone, especially for machine code where most instructions involve bit-wise operations, as illustrated using two simple examples. Ex. 1.1 illustrates that applying Post can be complex even for a single instruction, and Ex. 1.2 motivates why a technique for applying Pˆost for a sequence of instructions is desirable.
+
+
+
+
+Example 1.1 Consider the Intel x86 instruction τ
+def
+= add bh,al, which adds al,
+
+the low-order byte of 32-bit register eax, to bh, the second-to-lowest byte of 32-bit register ebx. The registers eax and ecx are not modified by the instruction. The semantics of τ can be expressed in quantifier-free bit-vector logic (QFBV) as the
+
+formula ϕτ :
+
+def
+
+⎛ (ebx & 0xFFFF00FF)
+
+⎞ Λ eaxj = eax
+
+ϕτ = ebxj = ⎝
+| ((ebx + 256 ∗ (eax & 0xFF)) & 0xFF00)⎠
+Λ ecxj = ecx,
+(4)
+
+where “&” and “|” denote bitwise-and and bitwise-or, respectively, and a symbol with a prime denotes the value of the symbol in the post-state. Eqn. (4) shows that the semantics of a seemingly simple add instruction involves non-linear bit-masking operations.
+Now suppose that the abstract domain A is the domain of relational affine equalities among 32-bit registers [8]. We would like to compute Post[τ ](a), where a ∈ A is ebx = ecx. Computing Post[τ ](A) corresponds to finding the strongest affine relation that holds among eaxj, ebxj, and ecxj after τ is executed starting
+
+def	16	j
+16	j
+
+from any concrete state in γ(a). For this example, Pˆost[τ ](a) = (2 ebx =2 ecx +
+224eaxj) Λ (224ebxj = 224ecxj). Multiplying by a power of 2 serves to shift bits to the left; because it is performed in arithmetic mod 232, bits shifted off the left end are unconstrained. Thus, the first conjunct of Post[τ ](a) captures the relationship between the low-order two bytes of ebxj, the low-order two bytes of ecxj, and the low-order byte of eaxj.
+One approach to applying an abstract transformer is based on the structure of the term used to express the concrete transformer: a sound abstract operator—& ,
++ , ∗ , | , and = —is used in place of each concrete operator— &, +, ∗, |, and =, respectively. In general, such an operator-by-operator reinterpretation approach is sound, but is not guaranteed to compute Post. For this example, the reinterpreta- tion approach results in 224ebxj = 224ecxj, which is a strict over-approximation of Pˆost[τ ](a) [9].	2
+
+Example 1.2 Consider the two Intel x86 instructions τ1
+def
+= push 42 and τ1
+def
+=
+
+pop eax. The instruction τ1 pushes the value 42 onto the stack, and τ2 pops the value on top of the stack into the register eax.
+As in Ex. 1.1, we consider the abstract domain A of relational affine equalities among 32-bit registers [8]. We would like to compute Post[τ1; τ2](a), where a = T; that is, we want to apply the abstract transformer for the sequential composition of
+def
+τ1 and τ2. One approach is to compute the value Post[τ2](Post[τ1](a)). Post[τ1](a) =
+T, because A is able to only capture relations between registers, and is incapable of holding onto properties of values on the stack. Consequently, Pˆost[τ2](Pˆost[τ1](a)) =
+Pˆost[τ2](T)= T. In contrast, Pˆost[τ1; τ2](A) = eax = 42.	2
+Exs. 1.1 and 1.2 illustrate the fact that an abstract domain can be expressive enough to capture invariants before and after a sequence of operations or instruc- tions, but not capable of capturing invariants at some intermediate point. As illus- trated in Ex. 1.1, the application of a sequence of sound abstract operations can lose precision because it is necessary to express the intermediate result in the lim- ited language supported by the abstract domain. Ex. 1.2 illustrates that a similar phenomenon holds at the level of a sequence of instructions: again, the need to
+
+express an intermediate result in the limited language supported by the abstract domain can cause a loss of precision.
+The precision obtained from a solution to BII depends on the set of “observa- tion points” (or, equivalently the equation system being solved). For instance, in Ex. 1.2, the strawman solution does compute the best inductive A-invariant if the intermediate point between τ1 and τ2 is observable. Ex. 1.2 shows that, from the standpoint of precision, the fewer observation points, the better. As with many methods in automatic program analysis and verification, our method normally re- quires that each loop be cut by at least one observation point. Thus, the set of loop headers would be a natural choice for the set of observation points. The take-away from this discussion is that it can be desirable to have a procedure that is capable of applying Post for an arbitrary loop-free sequence of instructions.
+Most program-analysis steps, including the application of Post, can be cast as a problem that requires bridging a gap between (i) the use of logic for specifying program semantics and program correctness, and (ii) abstract interpretation. The reason logic comes into play is because the problem of needing to apply γ in Eqn. (2) can be side-stepped by working with symbolic representations of sets of states (i.e., using formulas in some logic L). The use of L-formulas to represent sets of states is convenient because logic can also be used to specify a language’s concrete semantics; i.e., the concrete semantics of a transformer Post[τ ] can be stated as a formula ϕτ ∈L that specifies the relation between input and output states.
+The key insight behind our work is that the problem of bridging the gap between the use of logic and abstract interpretation can be cast as the problem of symbolic abstraction [25,29,31,33]: “Given a formula ϕ ∈ L, find the most-precise value in abstract domain A that over-approximates the meaning of ϕ”. In other words, the symbolic abstraction of ϕ, denoted by α(ϕ), is the strongest consequence of ϕ that can be expressed in A. In particular, when L is powerful enough to express the full semantics of a given programming language of interest, and γ is an operation that maps a ∈A to an L-formula that captures γ(a),
+Post[τ ](a)= α(ϕτ Λ γ(a)).	(5)
+Eqn. (5) yields the following insight: the problem of applying Post reduces to the problem of symbolic abstraction.
+Several frameworks, parameterized by L and A, have been developed for solving the symbolic-abstraction problem [25,33,29]. In addition, some of the frameworks [33,29] implement an “anytime” algorithm—i.e., the algorithm can be equipped with a monitor, and if too much time or space is being used, the algorithm can be stopped at any time, and provide a safe (over-approximating) answer.
+A key advantage of these symbolic-abstraction frameworks is that they help to raise the level of automation in abstract interpretation: an analysis designer need
+only implement a comparatively small number of operations: γ^, β, and H (see §2;
+Alg. 1). If implementations of H and ± are also provided, they enable the use of anytime algorithms (see §2; Alg. 2).
+
+It is worthwhile recapping the advantages and non-standard aspects of our ap- proach:
+The symbolic-abstraction approach to implementing a program analyzer im- poses much less of a burden on an analysis designer than conventional ap- proaches: he need only supply a small number of operations. 7 Moreover, the operations are almost entirely agnostic to both the programming language to be analyzed and the logic used to specify the concrete semantics.
+One of the required operations (called β, see §2) involves converting a concrete state σ to the most-precise element of the abstract domain that over-approximates {σ}. When the analysis is cast as finding the least fixed- point of an equation system (cf. Eqn. (1)), β is the only direct connection to the programming language and logic in use.
+The rest of the operations that the analysis designer must specify are abstract-domain operations. In particular, the analysis designer does not explicitly specify either abstract transformers (e.g., an abstract version of “x := y + 1”) or specific abstract operations for the operations of the programming language or logic (& , + , ∗ , | , etc.).
+Eqn. (1) has a conventional form, but is non-standard because it uses the appli- cation of the most-precise abstract transformer Post[τi,j], whereas most work on abstract interpretation uses less-precise abstract transformers. For instance, some systems only support the state transformations of a restricted modeling language—e.g., affine programs [5,22] or Boolean programs [1]. Transforma- tions outside the modeling language are over-approximated very coarsely. For example, for an assignment statement “x := e” in the original program, if e is an expression that uses any non-modeled operator, the statement is modeled as “x := ?” or, equivalently, “havoc(x)”. (That is, after “x := e” executes, x can hold any value.) This translation from a program to the program-modeling language already involves some loss of precision.
+In contrast, the application of Post[τi,j] in Eqn. (1) always incorporates the full concrete semantics of τi,j (i.e., without an a priori abstraction step).
+The analyzers obtained via our approach can find best inductive A-invariants.
+Not only does the work provide insight on fundamental limits in abstract in- terpretation, the algorithms that we present are also practical. We created an invariant-generation tool called Santini based on the principles of symbolic abstrac- tion. Santini uses the predicate-abstraction domain that can infer arbitrary Boolean combinations of a given set of predicates. The implementation of the abstract do- main was simple: just 1200 lines of C# code. We then compared the performance of Santini with Houdini [11], which is a well-established tool that infers only conjunc- tive invariants from a given set of predicates. We ran the Corral model checker [18] using invariants supplied by Houdini and Santini. For 19 examples for which Corral gave an indefinite result using Houdini-supplied invariants, invariants discovered using Santini allowed Corral to give a definite result in 9 cases (47%); see [31, §5].
+
+7 In this discussion, we are talking about the implementation of the analysis component that deals with ab- stract transformers. We assume that we already have a procedure to obtain the set of concrete transformers
+{τij }, expressed in a suitable decidable logic, for each loop-free fragment of a program.
+
+
+
+
+(a)
+// Initialize
+a = read input();
+b = a;
+x = 0;
+y = 0;
+while (*) {  // Loop invariant: a==b && x==y
+a = a+2;
+b = (x==y) ? b+2 : read input();
+x = x+1;
+y = (a==b) ? y+1 : read input();
+(11) }
+(12) . . . // Exit invariant: a==b && x==y
+
+
+
+(b)
+
+def
+τ
+
+1,6 = b
+= a Λ x
+=0 Λ y =0 
+
+⎛	aj = a +2	⎞
+
+(c)	τ6,6
+def	Λ (x = y) ⇒(bj = b + 2)
+= ⎜	⎟
+
+Λ xj = x +1 
+Λ (aj = bj) ⇒(yj = y + 1)
+
+τ6,12
+def
+= a
+= a Λ bj = b Λ xj = x Λ yj = y
+
+
+Fig. 1. (a) Example program. (b) Dependences among node-variables in the program’s equation system (over node-variables {V1, V6, V12}). (c) The transition relations among {V1, V6, V12} (expressed as formulas).
+
+This experiment shows that it is possible to quickly implement a correct and precise invariant generator that uses an expressive abstract domain. The other instantia- tion of our BII framework is based on WALi [16], a tool for solving program-analysis problems using an abstract domain, which we have used to perform machine-code analysis [31, §5].
+Proofs for theorems in this paper can be found in [31].
+
+Basic Insights
+Fig. 1(a) shows an example program that we will use to illustrate finding the best inductive invariant when the abstract domain is the domain of relational affine equal- ities over integers mod 232 [8]. We concentrate on lines (1), (6), and (12). Fig. 1(b) depicts the dependences in the equation system over node-variables {V1, V6, V12}. Fig. 1(c) gives formulas for the transition relations among {V1, V6, V12}. The re- mainder of this section illustrates how to solve the BII problem for the following equation system, which corresponds to Figs. 1(b) and 1(c):
+V1 = T
+V6 = Pˆost[τ1,6](V1) H Pˆost[τ6,6](V6)
+
+It is convenient to rewrite these equations as
+V1 = T
+V6 = V6 H Pˆost[τ1,6](V1) H Pˆost[τ6,6](V6)	(6)
+V12 = V12 H Pˆost[τ6,12](V6)
+Solving the BII Problem from Below. In the most basic approach to solving
+
+
+
+
+Algorithm 1: Post [τ ](v)
+1
+2 lower′ →⊥ 
+3 while  true do
+4
+
+
+5	⟨S, S′⟩→ Model(γ(v) Λ τ Λ чγ( lower′ ))
+6	if ⟨S, S′⟩ is TimeOut then
+7	 return T
+8	else if ⟨S, S′⟩ is None then
+9	 break	// Pˆost[τ ](v) = lower′ 
+10	else	// S′ /|= γ^( lower′ )
+‡
+Algorithm 2: Post [τ ](v)
+
+
+1 upper′ →T 
+2 lower′ →⊥ 
+3 while lower′ /= upper′ Λ ResourcesLeft  do
+4	p′ → AbstractConsequence(lower′, upper′)
+// p′ ± lower′, p′ /± upper′ 
+5	⟨S, S′⟩→ Model(γ(v) Λ τ Λ чγ( p′ ))
+6	if ⟨S, S′⟩ is TimeOut then
+7	 break
+8	else if ⟨S, S′⟩ is None then
+9	upper′ → upper′ H p′ 	// Pˆost[τ ](v) ± p′ 
+10	else	// S′ /|= γ^( p′ )
+
+12  v′ → lower′ 
+13 return v’
+11	lower → lower H β(S )
+12  v′ → upper′ 
+
+	 13 return v’
+
+the BII problem, we assume that we have an essentially standard fixed-point solver that performs chaotic iteration. The method will create successively better under- approximations to the solution, until it finds a fixed point, which will also be the best inductive invariant. We illustrate the algorithm on Eqn. (6).
+What is special, compared to standard equation solvers, is that each application of the right-hand side of an equation in Eqn. (6)—defined by the corresponding formula in Fig. 1(c)—is given the best-transformer interpretation by means of a function Post for applying the best abstract transformer. That is, Post satisfies
+Post[τ ](a)= (α ◦ Post[τ ] ◦ γ)(a). A specific instance of Post is the function Post , given as Alg. 1 [25].
+†
+Each call to Post [τ ](v) performs a successive-approximation process, working
+up from ⊥ (line 2), to identify vj such that vj = (α ◦ Post[τ ] ◦ γ)(v). This successive-approximation process is based on the following principle:
+†
+Post [τ ](v) computes the answer via a (sophisticated) iterative sampling pro-
+cess, using an SMT solver. Blocking clauses are used to push the solver to explore a new part of the state space on each iteration.
+To guarantee that the algorithm terminates with the most-precise result, Pˆost
+imposes certain requirements: (i) abstract domain A must be a join semi-lattice with a least element ⊥, and have no infinite ascending chains; 8 (ii) logic L must be closed under Λ and ¬; and (iii) certain operations must be available:
+The operation of symbolic concretization (line 5 of Alg. 1), denoted by γ, maps an abstract value a ∈ A to a formula γ(a) ∈L such that a and γ(a) represent the same set of concrete states (i.e., γ(a) = [γ(a)]], where [· ] denotes the
+Given a formula ψ ∈ L, Model(ψ) returns (i) a satisfying model S if an SMT solver is able to determine that ψ is satisfiable in a given time limit, (ii) None if the SMT solver is able to determine that ψ is unsatisfiable in the time limit, and (iii) TimeOut otherwise.
+The formula γ(v) Λ τ Λ ¬γ(lowerj) to which Model is applied in line 5 is
+8	^	^
+For domains with infinite ascending chains, the techniques is this paper can be used to generate sound
+but not necessarily most-precise transformers. Specifically, the use of join in the algorithms can be replaced by the use of widening operators to guarantee termination.
+
+a transition formula, and thus Model returns a two-state model ⟨S, Sj⟩, which we refer to as a state-pair. (In general, we use unprimed variables to denote pre-state quantities, and primed variables to denote post-state quantities.)
+The representation function β (line 11 of Alg. 1) maps a singleton concrete state S ∈C to the least value in A that over-approximates {S}.
+The variable lowerj is initialized to ⊥ (line 2). Then, on each iteration of the while-loop on lines 3–11 a concrete state-pair ⟨S, Sj⟩ is identified that satisfies tran- sition relation τ —as constrained by γ(v) and чγ(lowerj)—(line 5), and the abstrac- tion β(Sj) of post-state Sj is joined into lowerj (line 11). Each concrete state-pair
+⟨S, Sj⟩ is obtained by calling an SMT solver to obtain a satisfying assignment of the transition relation under consideration. Abstract value lowerj characterizes the set of already-found post-states. To ensure that a new post-state is found on each iteration, the formula чγ(lowerj) is used as a blocking clause for the next call on the SMT solver; see the third conjunct in line 5. Thus, the algorithm does not merely ask the SMT solver for a new post-state; it requests a post-state that guarantees progress. That is, the post-state Sj returned by the SMT solver is one for which lowerj ç lowerj H β(Sj).
+Fig. 2 shows a possible chaotic-iteration sequence when a BII solver is in- voked to find the best inductive affine-equality invariant for Eqn. (6), namely,
+⟨V1 '→ T, V6 '→ [a = b, x = y], V12 '→ [a = b, x = y]⟩. 9 Note that this abstract value corresponds exactly to the loop-invariant and exit-invariant shown in the comments on lines 6 and 12 of Fig. 1(a). Moreover, the same abstract value would be arrived at no matter what sequence of choices is made during chaotic iteration to find the least fixed-point of Eqn. (6).
+One such sequence is depicted in Fig. 2, where three chaotic-iteration steps are performed before the least fixed point is found. The three steps propagate information from V1 to V6; from V6 to V6; and from V6 to V12, respectively. (At this point, to discover that chaotic iteration has quiesced, the solver would have to do some additional work, which we have not shown because it does not provide any additional insight on how BII problems are solved.)
+†
+
+The Value of a Bilateral Algorithm. Pˆost
+is not resilient to timeouts. A query
+†
+
+to the SMT solver—or the cumulative time for Post —might take too long, in which
+†
+case the only answer that is safe for Pˆost to return is T (line 7 of Alg. 1). To remedy
+this situation, we use a bilateral algorithm for Pˆost [29].  A bilateral algorithm
+maintains both an under-approximation and an over-approximation of the desired answer. The advantage of a bilateral algorithm is that in case of a timeout, it is safe to return the over-approximation. At various stages of the algorithm, effort is expended on improving the over-approximation, and if the algorithm were given additional time, it might return a better answer. (Such an algorithm is called an
+
+9 We write abstract values in Courier typeface (e.g., [a = b, x = 0, y = 0] or [a′ = b′, x′ = 0, y′ = 0] are  pre-state  and  post-state  abstract  values,	respectively);	concrete	state-pairs  in  Ro-
+man	typeface	(e.g.,	a '→ 42,b '→ 27,x '→ 5,y '→ 19, a′ '→ 17, b′ '→ 17, x′ '→ 0, y′ '→ 0 );	and	ap- proximations  to  BII  solutions  as  mappings  from  node-variables  to  abstract  values  (e.g.,
+⟨V1 '→ T, V6 '→ [a = b, x = 0, y = 0], V12 '→ [a = 28, b = 28, x = 35, y = 35]⟩).
+
+Initialization:	ans := ⟨V1 '→ T, V6 '→ ⊥, V12 '→ ⊥⟩
+†
+Iteration 1:	V6 := V6 H Post [τ1,6](V1)
+†
+= ⊥H Post [τ1,6](T)
+lowerj := ⊥
+
+⟨S, Sj⟩ := Model(true Λ τ
+ 
+1,6
+Λ чγ^(⊥))
+
+a '→ 42,b '→ 27,x '→ 5,y '→ 99,
+= aj '→ 17, bj '→ 17, xj '→ 0, yj '→ 0
+// A satisfying concrete
+// state-pair
+
+lowerj := ⊥H [aj = 17, bj = 17, xj = 0, yj = 0]
+⟨S, Sj⟩ := Model(true Λ τ	Λ чγ([aj = 17, bj = 17, xj = 0, yj = 0]))
+1,6	^
+
+a '→ 73,b '→ 2,x '→ 15,y '→ 19,
+= aj '→ 28, bj '→ 28, xj '→ 0, yj '→ 0
+// A satisfying concrete
+// state-pair
+
+lowerj := [aj = 17, bj = 17, xj = 0, yj = 0] H [aj = 28, bj = 28, xj = 0, yj = 0]
+vj := [aj = bj, xj = 0, yj = 0]
+V6 := ⊥H [a = b, x = 0, y = 0]= [a = b, x = 0, y = 0]
+ans := ⟨V1 '→ T, V6 '→ [a = b, x = 0, y = 0], V12 '→ ⊥⟩
+Iteration 2:	V6 := V6 H Pˆost [τ6,6](V6)
+†
+= [a = b, x = 0, y = 0] H Post [τ6,6]([a = b, x = 0, y = 0])
+lowerj := ⊥
+⟨S, Sj⟩ := Model(γ([a = b, x = 0, y = 0]) Λ τ	Λ чγ(⊥))
+^	6,6	^
+
+
+aj '→ 58, bj '→ 58, xj '→ 1, yj '→ 1
+lowerj := ⊥H [aj = 58, bj = 58, xj = 1, yj = 1]
+⟨S, Sj⟩ := Model(γ([a = b, x = 0, y = 0]) Λ τ
+// state-pair
+
+Λ чγ([aj = 58, bj = 58, xj = 1, yj = 1]))
+
+^	6,6	^
+
+
+aj '→ 18, bj '→ 18, xj '→ 1, yj '→ 1
+// state-pair
+
+lowerj := [aj = 58, bj = 58, xj = 1, yj = 1] H [aj = 18, bj = 18, xj = 1, yj = 1]
+vj := [aj = bj, xj = 1, yj = 1]
+V6 := [a = b, x = 0, y = 0] H [a = b, x = 1, y = 1]= [a = b, x = y]
+ans := ⟨V1 '→ T, V6 '→ [a = b, x = y], V12 '→ ⊥⟩
+†
+Iteration 3:	V12 := V12 H Post [τ6,12](V6)
+†
+= ⊥H Post [τ6,12]([a = b, x = y])
+lowerj := ⊥
+⟨S, Sj⟩ := Model(γ([a = b, x = y]) Λ τ	Λ чγ(⊥))
+^	6,6	^ 
+
+a '→ 17,b '→ 17,x '→ 99,y '→ 99,
+= aj '→ 17, bj '→ 17, xj '→ 99, yj '→ 99
+// A satisfying concrete
+// state-pair
+
+lowerj := ⊥H [aj = 17, bj = 17, xj = 99, yj = 99]
+⟨S, Sj⟩ := Model(γ([a = b, x = y]) Λ τ	Λ чγ([aj = 17, bj = 17, xj = 99, yj = 99]))
+^	6,6	^ 
+
+a '→ 28,b '→ 28,x '→ 35,y '→ 35,
+= aj '→ 28, bj '→ 28, xj '→ 35, yj '→ 35
+// A satisfying concrete
+// state-pair
+
+lowerj := [aj = 17, bj = 17, xj = 99, yj = 99] H [aj = 28, bj = 28, xj = 35, yj = 35]
+vj := [aj = bj, xj = yj]
+V12 := ⊥H [a = b, x = y]= [a = b, x = y]
+ans := ⟨V1 '→ T, V6 '→ [a = b, x = y], V12 '→ [a = b, x = y]⟩
+Fixed Point!
+Fig. 2. A possible chaotic-iteration sequence when a BII solver is invoked to find the best inductive affine-e- quality invariant for Eqn. (6). The parts of the trace enclosed in boxes show the actions that take place in
+↑
+calls to Alg. 1 (Post ). (By convention, primes are dropped from the abstract value returned from a call on
+Pˆost .)
+
+“anytime algorithm”.) In our case, the over-approximation serves as an “insurance policy” against being forced to return T in case the Post algorithm runs out of time.
+‡
+Alg. 2 shows our bilateral algorithm, called Pˆost . The differences between
+Pˆost and Pˆost are highlighted in gray. Most concern the variables upperj or pj.
+The requirements for Pˆost are only slightly different from those for Pˆost :
+Abstract domain A must be a lattice (i.e., with both meet and join) with a least element ⊥ and a greatest element T.
+AbstractConsequence must meet the following requirements:
+Let lowerj and upperj be two A values such that lowerj ± upperj. If pj =
+AbstractConsequence(lowerj, upperj), then pj ± lowerj and pj /± upperj.
+This property ensures that each iteration of the while-loop on lines 3–11 makes progress: The concrete state-pair ⟨S, Sj⟩ is obtained by calling Model(γ(v) Λ τ Λ чγ(pj)) (line 5). If the formula is not satisfiable, then upperj is decreased by meeting it with pj (line 9); otherwise, lowerj is increased by joining it with β(Sj) (line 11).
+There may be multiple values pj that satisfy the conditions for being an
+abstract consequence of lowerj and upperj. Furthermore, Pˆost can be modified
+to pick a different abstract consequence if some choice leads to an SMT solver timeout. This modified algorithm, as well as an algorithm for computing the abstract consequence that is applicable to any conjunctive abstract domain, is described in [29, §3].
+It may appear that it is necessary for A to have no infinite descending chains (as well as no infinite ascending chains). However, we can modify the algorithm slightly to ensure that (i) it does not get trapped updating upperj along an infinite descending chain, and that (ii) it exits when lowerj has converged to Post[τ ](v). We can accomplish these goals by forcing the algorithm to perform
+†
+the basic iteration step from Pˆost at least once every N iterations, for some
+Pˆost  initializes upperj to T (line 1).	A value for pj is obtained by calling
+AbstractConsequence(lowerj, upperj) (line 4). The SMT solver is invoked by call- ing Model(γ(v) Λ τ Λ чγ(pj)) (line 5). If the formula has a model ⟨S, Sj⟩, Alg. 2 proceeds as in Alg. 1: lowerj → lowerj H β(Sj). If the formula has no model, then Post[τ ](v) ± pj, and thus it is safe to update upperj by performing a meet with pj (line 9). Moreover, this step is guaranteed to decrease the value of upperj because pj /± upperj.
+When there is an SMT-solver timeout (line 6), Pˆost returns upperj as the answer
+(lines 7, 12, and 13). In this case, the value returned can be an over-approximation of the desired answer Post[τ ](v); however, if the loop exits without a timeout, then lowerj must equal upperj, and the return value equals Pˆost[τ ](v).
+†
+Fig. 3 shows a possible trace of Iteration 2 from Fig. 2 when the call to Post
+‡
+(Alg. 1) is replaced by a call to Pˆost  (Alg. 2).  Note how a collection of indi-
+
+V6 := V6 H Post [τ6,6](V6)
+‡
+= [a = b, x = 0, y = 0] H Post [τ6,6]([a = b, x = 0, y = 0])
+upperj := T
+lowerj := ⊥
+pj := AbstractConsequence(⊥, T)
+= ⊥
+⟨S, Sj⟩ := Model(γ([a = b, x = 0, y = 0]) Λ τ	Λ чγ(⊥))
+^	6,6	^
+=	a '→ 56,b '→ 56,x '→ 0,y '→ 0,	// A satisfying concrete
+
+aj '→ 58, bj '→ 58, xj '→ 1, yj '→ 1
+lowerj := ⊥H [aj = 58, bj = 58, xj = 1, yj = 1]
+// state-pair
+
+pj := AbstractConsequence([aj = 58, bj = 58, xj = 1, yj = 1], T)
+= [xj = 1]
+
+⟨S, Sj⟩ := Model(γ([a = b, x = 0, y = 0]) Λ τ
+6,6
+Λ чγ([xj = 1]))
+
+= None
+upperj := TH [xj = 1]= [xj = 1]
+pj := AbstractConsequence([aj = 58, bj = 58, xj = 1, yj = 1], [xj = 1])
+= [yj = 1]
+
+⟨S, Sj⟩ := Model(γ([a = b, x = 0, y = 0]) Λ τ
+6,6
+Λ чγ([yj = 1]))
+
+= None
+upperj := [xj = 1] H [yj = 1]= [xj = 1, yj = 1]
+pj := AbstractConsequence([aj = 58, bj = 58, xj = 1, yj = 1], [xj = 1, yj = 1])
+= [aj = 58]
+⟨S, Sj⟩ := Model(γ([a = b, x = 0, y = 0]) Λ τ	Λ чγ([aj = 58]))
+^	6,6	^
+
+
+aj '→ 21, bj '→ 21, xj '→ 1, yj '→ 1
+// state-pair
+
+lowerj := [aj = 58, bj = 58, xj = 1, yj = 1] H [aj = 21, bj = 21, xj = 1, yj = 1]
+= [aj = bj, xj = 1, yj = 1]
+pj := AbstractConsequence([aj = bj, xj = 1, yj = 1], [xj = 1, yj = 1])
+= [aj = bj]
+
+⟨S, Sj⟩ := Model(γ([a = b, x = 0, y = 0]) Λ τ
+6,6
+Λ чγ([aj = bj]))
+
+= None
+upperj := [xj = 1, yj = 1] H [aj = bj]
+= [aj = bj, xj = 1, yj = 1]
+lowerj /= upperj = false
+vj := [aj = bj, xj = 1, yj = 1]
+V6 := [a = b, x = 0, y = 0] H [a = b, x = 1, y = 1]= [a = b, x = y]
+ans := ⟨V1 '→ T, V6 '→ [a = b, x = y], V12 '→ ⊥⟩
+
+↑
+Fig. 3. A possible trace of Iteration 2 from Fig. 2 when the call to Post
+‡
+(Alg. 1) is replaced by a call to
+
+Pˆost (Alg. 2).
+and fifth calls to AbstractConsequence: [xj = 1], [yj = 1], and [aj = bj], respec- tively. By these means, upperj works its way down the chain T N [xj = 1] N [xj = 1, yj = 1] N [aj = bj, xj = 1, yj = 1]. After each call to AbstractConsequence,
+
+the abstract-consequence constraint is tested to see if it really is an upper bound on the answer. For instance, the fourth call to AbstractConsequence returns [aj = 58]. The assertion that [aj = 58] is an upper-bounding constraint is refuted by the con- crete state-pair
+
+j	a '→ 19,b '→ 19,x '→ 0,y '→ 0,
+a′ '→ 21, b′ '→ 21, x′ '→ 1, y′ '→ 1
+which is used to improve the value of lowerj.
+The important point is that if Iteration 2 is taking too much time, Pˆost
+
+
+can
+
+be stopped and upperj returned as the answer. In contrast, if Pˆost is stopped
+because it is taking too much time, the only safe answer that can be returned is T.
+‡
+The “can-be-stopped-anytime” property of Pˆost  can make a significant difference
+
+in the final answer. For instance, suppose that Pˆost
+‡
+and Post
+‡
+both stop early
+
+during Iteration 2 (Figs. 2 and 3, respectively), and that Post returns [x = 1, y = 1],
+†
+whereas Pˆost returns T. Assuming no further timeouts take place during the
+
+
+↑
+Post
+Pˆost
+: ⟨V1 '→ T, V6 '→ T, V12 '→ T⟩
+: ⟨V1 '→ T, V6 '→ [x = y], V12 '→ [x = y]⟩
+
+‡
+
+Because of the timeout, the answer computed by Pˆost  is not the best inductive
+affine-equality invariant; however, the answer establishes that the equality con- straint [x = y] holds at both lines 6 and 12 of Fig. 1(a).
+Attaining the Best Inductive A-Invariant.
+Lemma 2.1 The least ﬁxed-point of Eqn. (1) (the best A-transformer equations of a transition system) is the best inductive invariant expressible in A.
+Corollary 2.2 Applying an equation solver to the best A-transformer equations,
+using either Pˆost  or Pˆost  to evaluate equation right-hand sides, ﬁnds the best
+inductive A-invariant if there are no timeouts during the evaluation of any right- hand side.
+
+Best Inductive Invariants and Interprocedural Anal- ysis
+In this section, we present a method for solving the BII problem for multi-procedure programs. Our framework is similar to the so-called “functional approach” to in- terprocedural analysis of Sharir and Pnueli [28] (denoted by SP), which works with an abstract domain that abstracts transition relations. For instance, our approach
+also uses an abstract domain that abstracts transition relations, and
+creates a summary transformer for each reachable procedure P , which over- approximates the transition relation of P .
+However, to make the symbolic-abstraction approach suitable for interprocedural analysis, the algorithm uses a generalization of Pˆost, called Compose[τ ](a), where
+
+τ ∈ L[v; vj] and a ∈ A[v; vj] both represent transition relations over the program variables v. The goal of Co^mpose[τ ](a) is to create an A[v; vj] value that is the best over-approximation of a’s action followed by τ ’s action. Furthermore, instead of Eqn. (1), we find the least solution to Eqns. (7)–(11) below, where each application of the right-hand side of an equation is given the best-transformer interpretation—in this case, by means of Co^mpose.
+A program is defined by a set of procedures Pi, 0 ≤ i ≤ K, and represented by an interprocedural control-flow graph G = (N, F ). G consists of a collection of intraprocedural control-flow graphs G1, G2,... , GK , one of which, Gmain, represents the program’s main procedure. The node set Ni of Gi = (Ni, Fi) is partitioned into five disjoint subsets: Ni = Ei Xi Ci Ri Li. Gi contains exactly one enter node (i.e., Ei = {ei}) and exactly one exit node (i.e., Xi = {xi}). A procedure call in Gi is represented by two nodes, a call node c ∈ Ci and a return-site node r ∈ Ri, and has two edges: (i) a call-to-enter edge from c to the enter node of the called procedure, and (ii) an exit-to-return-site edge from the exit node of the called procedure to r. The functions call and ret record matching call and return-site nodes: call(r)= c and ret(c)= r. We assume that an enter node has no incoming edges except call-to-enter edges.
+φ(emain)= Id|a1	a1 ∈A describes the set of initial stores at emain	(7)
+
+φ(ep)= Id|a	ep ∈ E, p /= main, and a =	.
+c∈C, c calls p
+Vc	(8)
+
+φ(n)=	.
+m→n∈F
+Co^mpose[τm,n, φ(m)]	for n ∈ N , n /∈ (R ∪ E)	(9)
+
+φ(n)= Co^mpose[γ^(φ(xq )), φ(call(n))]	for n ∈ R, and call(n) calls q	(10)
+Vn = range(φ(n))	(11)
+
+The equations involve two sets of “variables”: φ(n) and Vn, where n ∈ N . φ(n) is a partial function that represents a summary of the transformation from eproc(n) to
+n. Id|a denotes the identity transformer restricted to inputs in a ∈ A. The domain of φ(n) over-approximates the set of reachable states at eproc(n) from which it is possible to reach n; the range of φ(n) over-approximates the set of reachable states at n. Vn’s value equals the range of φ(n).
+^ ‡	^ ‡
+Compose is essentially identical to Alg. 2, except that in line 5, Compose
+performs a query using a three-state formula,
+j	jj	j
+⟨S, S ,S ⟩→ Model(γ^[v,v′](a) Λ τ[v′,v′′ ] Λ чγ^[v,v′′ ](p )),
+
+^ ‡	jj	j
+and in line 11, Compose applies a two-state version of β to S and S , dropping S
+j	j	jj	^ †
+
+completely: lower
+→ lower H β(S, S ). (Compose
+is defined similarly.)
+
+An important difference between our algorithm and the SP algorithm is that in our algorithm, the initial abstract value for the enter node ep for procedure p is specialized to the reachable inputs of p (see Eqn. (8)). In the SP algorithm, φ(ep) is always set to Id. Fig. 4 illustrates the effect of specializing the abstract pre-
+
+(1) main() {	(8) void halve() {
+
+Fig. 4. The effect of specializing the abstract pre-condition at enter node ep, and the resulting strengthening of the inferred abstract post-condition.
+condition at enter node ep on the inferred abstract post-condition. The abstract domain used in Fig. 4 is the domain of affine equalities over machine integers [8]. With that domain, it is possible to express that a 32-bit variable x holds an even number: 231x = 0. Consequently, the initial abstract value for enter node ehalve is the identity relation, constrained so that x is even. Similarly, the initial abstract value for enter node eincrease is the identity relation, constrained so that x is odd.
+Note that the abstract value at the exit point xp of a procedure p serves as a procedure summary—i.e., an abstraction of p’s transition relation. Fig. 4 shows that by giving halve and increase more precise abstract values at the respective enter nodes, we obtained more precise procedure summaries at the respective exit points. In particular, for halve, the constraint x − 2xj = 0 provides a good characterization of the effect of a right-shift operation, but only when x is known to be even (cf. the entries for halve’s post-condition in columns 3 and 4 of Fig. 4).
+
+Related Work
+Previous work related to BII falls into two categories:
+Work on Post [13,23,25,35,26,17,2,8,21,33,29], which, as shown by Obs. 1 and Eqn. (1), provides a solution to the intraprocedural BII problem.
+Work specifically on the BII problem itself [11,34,12].
+Much of the work in item (i) could be used for the inter procedural BII problem by
+(a) generalizing those algorithms to perform Co^mpose, and (b) using them to solve Eqns. (7)–(11).
+Houdini [11] is the first algorithm that we are aware of that solves a version of the BII problem. The paper on Houdini does not describe the work in terms of abstract interpretation. Santini [31, §5] was directly inspired by Houdini, as an effort to broaden Houdini’s range of applicability.
+Yorsh et al. [34] introduced a particularly interesting technique. Their algorithm for the BII problem can be viewed as basically solving Eqn. (1) using Pˆost†. How-
+
+ever, they observed that it is not necessary to rely on calls to an SMT solver for
+†
+all of the concrete states used by Post ; instead, they used concrete execution of
+the program as a way to generate concrete states very cheaply. If for some program point q of interest they have state-set Sq, they obtain an under-approximation for the abstract value Vq by performing Vq = H{β(σ) | σ ∈ Sq}. This idea is similar in spirit to the computation of candidate invariants from execution information by
+‡
+Daikon [10]. Because Pˆost works simultaneously from below and from above, the
+Yorsh et al. heuristic can be used to improve the speed of convergence of lowerj in line 11 of Alg. 2.
+If we think of τ = ⟨... , τi,j,.. .⟩ as a monolithic transformer, an alternative way of stating the objective of intraprocedural BII is as follows:
+Given a concrete transformer τ and an abstract value a ∈ A that over- approximates the set of initial states, apply the best abstract transformer for τ ∗ to a (i.e., apply Post[τ ∗](a)).
+This problem was the subject of a recent technical report by Garoche et al. [12].
+Several of the techniques used in §2 and §3 are inspired by previously known methods. Alg. 1 is a variant of an algorithm due to Reps et al. [25, §5]. Alg. 2 adopts the ideas used in an anytime algorithm for symbolic abstraction [29, §3]. In interprocedural dataflow analysis, the idea of specializing the abstract value of an enter node has been used in a few earlier algorithms [24,27,15,14].
+Recent work has also explored connections between abstract interpretation and decision procedures [32,33,6,7]. In particular, D’Silva et al. [7] generalize the algo- rithm for Conflict Driven Clause Learning used in SAT solvers to solve the lattice- theoretic problem of determining if an additive transformer on a Boolean lattice is always bottom. In contrast, our algorithms ([32,33], Eqn. (1), and §3) address a broader class of problems. Our algorithms apply to non-Boolean lattices. More- over, provided there are no timeouts, our algorithms are capable of discovering if the most-precise answer is ⊥. However, they are also useful when the most- precise answer is not ⊥; in particular, our algorithms can be used to compute best transformers. Furthermore, our algorithms can be used to solve the BII problem (assuming no timeouts), and even when there are timeouts, they generate inductive program invariants.
+The last two authors have worked on a system, called TSL (for “Transformer Specification Language”) [19,20], that also aims to automate the creation of abstract-interpretation systems (primarily for machine-code analysis). TSL is based on a different approach to creating abstract transformers than symbolic abstract in- terpretation, but shares the property that the user first expresses the full semantics of the programming language of interest. With TSL, one specifies an instruction set’s concrete operational semantics by writing an interpreter using a first-order functional language. The interpreter that specifies how each instruction transforms a concrete state. To define an abstract interpretation for an abstract domain A, one defines “replacement” datatypes for TSL’s numeric/bit-vector and map datatypes, along with 42 replacement numeric/bit-vector operations, 12 replacement map- access/update operations, plus a few additional operations, such as H, H, and widen.
+
+From such a reinterpretation of the TSL meta-language, which is extended auto- matically to TSL expressions and functions, TSL creates sound over-approximating transformers. Standard analysis algorithms can then use the transformers to ob- tain inductive A-invariants. However, there is generally some loss of precision with the reinterpretation approach, so the resulting analyses generally do not find best inductive A-invariants.
+
+Conclusion
+Our experience is that the abstract-interpretation community is either unfamiliar with, or under-appreciates, the power and utility of symbolic abstraction. In this paper, we have explained how symbolic abstraction allows abstract interpreters to be created that are correct by construction: from a specification of the concrete semantics in logic, and a few operations on values in abstract domain A, we auto- matically obtain a solution to the BII problem: “Given program P , and an abstract domain A, find the most-precise inductive A-invariant for P .”
+BII is clearly an important problem because it represents the limit of obtainable precision for a given abstract domain. The key insights behind our approach are:
+The BII problem reduces to the problem of applying Post.
+The problem of applying Post reduces to the problem of symbolic abstraction.
+The algorithm for symbolic abstraction is based on a (sophisticated) iterative sampling process, using an SMT solver. Blocking clauses are used to push the solver to explore a new part of the state space on each iteration.
+Because the symbolic-abstraction approach solves the BII problem (in the absence of timeouts), it can obtain more precise results than more conventional approaches to implementing abstract interpreters. In particular, the symbolic-abstraction ap- proach can identify invariants and procedure summaries that are more precise than the ones obtained by more conventional approaches.
+
+References
+Ball, T. and S. Rajamani, Bebop: A symbolic model checker for Boolean programs, in: Spin Workshop, 2000.
+Brauer, J. and A. King, Automatic abstraction for intervals using Boolean formulae, in: SAS, 2010.
+Cousot, P. and R. Cousot, Abstract interpretation: A unified lattice model for static analysis of programs by construction or approximation of fixpoints, in: POPL, 1977.
+Cousot, P. and R. Cousot, Systematic design of program analysis frameworks, in: POPL, 1979.
+Cousot, P. and N. Halbwachs, Automatic discovery of linear constraints among variables of a program, in: POPL, 1978.
+D’Silva, V., L. Haller and D. Kroening, Satisfiability solvers are static analyzers, in: SAS, 2012.
+D’Silva, V., L. Haller and D. Kroening, Abstract conflict driven learning, in: POPL, 2013.
+Elder, M., J. Lim, T. Sharma, T. Andersen and T. Reps, Abstract domains of affine relations, in: SAS, 2011.
+Elder, M., J. Lim, T. Sharma, T. Andersen and T. Reps, Abstract domains of affine relations, TR 1792, CS Dept., Univ. of Wisconsin, Madison, WI (2013).
+Ernst, M., J. Perkins, P. Guo, S. McCamant, C. Pacheco, M. Tschantz and C. Xiao, The Daikon system for dynamic detection of likely invariants, SCP 69 (2007).
+Flanagan, C. and K. R. M. Leino, Houdini, an annotation assistant for Esc/Java, in: FME, 2001.
+
+Garoche, P.-L., T. Kahsai and C. Tinelli, Invariant stream generators using automatic abstract transformers based on a decidable logic, Tech. Rep. CoRR abs/1205.3758, arXiv (2012).
+Graf, S. and H. Sa¨ıdi, Construction of abstract state graphs with PVS, in: CAV, 1997.
+Jeannet, B., A. Loginov, T. Reps and M. Sagiv, A relational approach to interprocedural shape analysis, in: SAS, 2004.
+Jeannet, B. and W. Serwe, Abstracting call-stacks for interprocedural verification of imperative programs, in: AMAST, 2004.
+Kidd, N., A. Lal and T. Reps, WALi: The Weighted Automaton Library	(2007), www.cs.wisc.edu/wpis/wpds/download.php.
+King, A. and H. Søndergaard, Automatic abstraction for congruences, in: VMCAI, 2010.
+Lal, A., S. Qadeer and S. K. Lahiri, A solver for reachability modulo theories, in: CAV, 2012.
+Lim, J. and T. Reps, A system for generating static analyzers for machine instructions, in: CC, 2008.
+Lim, J. and T. Reps, Tsl: A system for generating abstract interpreters and its application to machine- code analysis, Trans. on Prog. Lang. and Syst. 35 (2013), pp. 4:1–4:59.
+Monniaux, D., Automatic modular abstractions for template numerical constraints, LMCS 6 (2010).
+Mu¨ller-Olm, M. and H. Seidl, Precise interprocedural analysis through linear algebra, in: POPL, 2004.
+Regehr, J. and A. Reid, HOIST: A system for automatically deriving static analyzers for embedded systems, in: ASPLOS, 2004.
+Reps, T., S. Horwitz and M. Sagiv, Precise interprocedural dataflow analysis via graph reachability, in:
+POPL, 1995.
+Reps, T., M. Sagiv and G. Yorsh, Symbolic implementation of the best transformer, in: VMCAI, 2004.
+Sankaranarayanan, S., H. Sipma and Z. Manna, Scalable analysis of linear systems using mathematical programming, in: VMCAI, 2005.
+Schwoon, S., “Model-Checking Pushdown Systems,” Ph.D. thesis, Technical Univ. of Munich, Munich, Germany (2002).
+Sharir, M. and A. Pnueli, Two approaches to interprocedural data flow analysis, in: Program Flow Analysis: Theory and Applications, Prentice-Hall, 1981 .
+Thakur, A., M. Elder and T. Reps, Bilateral algorithms for symbolic abstraction, in: SAS, 2012.
+Thakur, A., M. Elder and T. Reps, Bilateral algorithms for symbolic abstraction, TR 1713, CS Dept., Univ. of Wisconsin, Madison, WI (2012).
+Thakur, A., A. Lal, J. Lim and T. Reps, Posthat and all that: Attaining most-precise inductive invariants, TR 1790, CS Dept., Univ. of Wisconsin, Madison, WI (2013).
+Thakur, A. and T. Reps, A Generalization of St˚almarck’s Method, in: SAS, 2012.
+Thakur, A. and T. Reps, A method for symbolic computation of precise abstract operations, in: CAV, 2012.
+Yorsh, G., T. Ball and M. Sagiv, Testing, abstraction, theorem proving: Better together!, in: ISSTA, 2006.
+Yorsh, G., T. Reps and M. Sagiv, Symbolically computing most-precise abstract operations for shape analysis, in: TACAS, 2004.

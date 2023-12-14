@@ -1,0 +1,1349 @@
+	Electronic Notes in Theoretical Computer Science 99 (2004) 49–86	
+www.elsevier.com/locate/entcs
+
+
+
+
+Program Transformations under
+Dynamic Security Policies
+Massimo Bartoletti1	Pierpaolo Degano1	Gian Luigi Ferrari2
+Dipartimento di Informatica, Universita` di Pisa, Italy
+
+Abstract
+A new static analysis is proposed for programming languages with access control based on stack inspection. This analysis allows for various security-aware program optimizations. A novel feature of our static analysis is that it is parametric with respect to the security policy in force, so it needs not to be recomputed when the access rights are dynamically updated.
+Keywords: Language-based security, Access control, Static analysis, Compiler optimizations
+
+
+Introduction
+Programming applications over wide area networks has emphasized issues that had received less priority when working over local area networks. One of these issues concerns security. In a wide area network no central authority can define and enforce policies which regulate accesses to resources. Applica- tions are designed to be executed and interoperate with potentially malicious and untrusted components, e.g. components originated from different, possi- bly unknown, administration domains. Typically, components are developed and maintained by different providers and may be downloaded and linked to- gether “on demand”. At run-time, systems interleave computational activities
+
+1 Partially supported by EU project DEGAS and MIUR project MEFISTO.
+2 Partially supported by FET project PROFUNDIS.
+
+1571-0661 © 2004 Elsevier B.V. Open access under CC BY-NC-ND license.
+doi:10.1016/j.entcs.2004.02.003
+
+with meta-programming activities, such as dynamic linking, assembling and customization of libraries, that permit to reconfigure the application without having to restart it.
+Security-aware programming languages, such as Java and C , have intro- duced programmable authorization-based models to determine when a prin- cipal can access a resource. These languages take access control decisions by inspecting the run-time call stack. A permission is granted, provided that it belongs to all the principals on the call stack. The so-called privileged opera- tions are an exception: they are allowed to execute any code granted to their principal, regardless of the calling sequence. This access control mechanism is known as stack inspection.
+Traditionally, stack inspection has been implemented with the lazy evalua- tion strategy: the call stack is only retrieved and inspected when access control tests are performed. This strategy has some drawbacks. First, the run-time overhead due to the analysis of stack frames may grow very high. Second, stack inspection deeply affects those interprocedural program transformations (i.e. method inlining) that may alter the structure of the call stack.
+Another evaluation strategy for stack inspection is the eager one: the access control context is updated at each method call (and return). However, since security checks are statistically less frequent than cross-domain calls, production implementations prefer to adopt the lazy strategy.
+A large amount of papers [2,3,4,6,9,10,12,17,21,28] witnesses the interest towards formally understanding and optimizing stack inspection. All these ap- proaches share a basic assumption: the binding between code and permissions is made at class-loading time, and it cannot be modified at run-time.
+However, starting from version 1.4.1, the Java security architecture allows for dynamic security policies: the binding between a class and its permissions can be deferred until the class is involved in an access control test. Still, the static binding of permissions is allowed.
+In this paper, we introduce a new static analysis for stack inspection, improving over previous analyses of ours, see e.g. [3]. Our present proposal is specifically designed to tackle the issues raised by dynamic security policies. We represent programs by control flow graphs, an idealized model not tied to any particular language. These graphs are extracted from actual bytecode through available control flow analyses; they feature primitive constructs for method invocation, exceptions, and access control based on stack inspection.
+Our analysis takes as input a control flow graph, and computes an abstract graph, whose nodes are pairs ⟨n, γ⟩ and edges are labelled by ϕ, where:
+n is a method invocation or return, or an access control test;
+
+γ is an access control context, i.e. the set of protection domains visited after the last privileged call (if any);
+ϕ is a traversability condition for the edge.
+The traversability conditions are used to associate each abstract node ⟨n, γ⟩ with a predicate Φ(n, γ), telling which conditions the security policy must satisfy in order for the node to be reachable.
+We prove our static analysis correct with respect to the operational seman- tics of control flow graphs: if the actual security policy allows for an execution leading to node n with access control context γ, then there exists a node ⟨n, γ⟩ in the abstract graph, and the security policy satisfies the condition Φ(n, γ). A significant novelty of our approach is that the static analysis is para- metric with respect to the security policy in force, hence it needs not to be
+recomputed each time the access rights are modified.
+Our static analysis provides a formal support for some security-aware op- timizations. In particular, we can detect (and remove):
+the redundant checks in a program, i.e. the checks which always pass;
+the dead code, which cannot be reached due to security restrictions;
+the inlineable method calls, i.e. those calls which can be safely replaced by a copy of the called method.
+Indeed, method inlining can lead to dramatic performance improvements, for the following reasons. First, it reduces the overhead of dynamic dispatch- ing; second, it allows the just-in-time optimizers to work on larger blocks of code, so making standard intraprocedural optimizations more effective.
+Our static analysis establishes conditions on the security policy which en- sure when these optimizations are valid.
+
+Program model
+We model programs as control flow graphs (CFGs for short) whose nodes represent access control tests, method invocations and returns, and whose edges represent the flow of control. We also consider a basic exception handling mechanism, with only one type of exceptions, no nested try blocks and no finally clauses. We do not define how CFGs are extracted from actual programs: this construction is well understood and algorithms and tools exist for it; see for example [14,19,26,27]. A full treatment of exceptions requires a tailored construction of the CFG, e.g. by the techniques presented in [8,23].
+CFGs hide any data flow information, and are therefore approximated; typically, the conditional construct is rendered as non-deterministic choice.
+
+This approximation is safe, in the sense that any actual execution flow is represented by a path in the CFG. However, the converse may not be true: some paths may exist which do not correspond to any actual execution. For instance, both branches of an “if” statement are represented, even in the cases when the same branch is always taken at run-time.
+Dynamic dispatching in object-oriented languages is another source of ap- proximation. When a program invokes a method on an object O, the run-time environment has to choose among the various implementations of that method. The decision is based on the actual class O belongs to, which is unpredictable at static time. To be safe, CFGs over-approximate the set of methods that can be invoked at each program point.
+
+Syntax
+Let D be a finite set of protection domains, and P be a finite set of permissions.
+Definition 2.1 A CFG ⟨N, E, Dom, Priv⟩ is an oriented graph, where:
+N is the set of nodes. Each n ∈ N is associated with a label l(n), describing the control flow primitive represented by the node. Labels give rise to three kinds of nodes: call nodes, representing method invocation, return nodes, which represent return from a method, and check(P ) nodes, testing whether the permission P is granted by the security policy or not. A distinguished element nε ∈ N plays the technical role of a single, isolated entry point.
+E ⊆ N × (N \ nε) is the set of edges. There are three kinds of edges: call edges n −→ n', which model interprocedural flow, transfer edges n −−· n', which correspond to sequencing, and catch edges n −−· n', which correspond to exception handling. The last two kinds represent intraprocedural flow.
+Dom : N →D is a mapping from nodes to protection domains.
+Priv : N → Bool tells whether a node enables its privileges or not.
+Each CFG is associated with a security policy Perm : D → 2P, which grants a set of permissions to each protection domain. The following treatment does not require security policies to be fixed over time. Hereafter, we will always abbreviate Perm(Dom(n)) with Perm(n).
+Definition 2.2 The methods of a control flow graph ⟨N, E⟩ are the connected components of the undirected graph ⟨N, E'⟩, where E' is the symmetric closure of the set of intraprocedural edges in E. We call µ(n) the method to which node n belongs. The entry points of µ(n) are deﬁned as:
+ε(µ(n))  =  { m ∈ µ(n) | ∃n' ∈ N. n' −→ m }
+
+Semantics
+The operational semantics of CFGs is defined by a transition system, whose configurations are call stacks. Moreover, each state has a boolean tag which tells whether an exception is active (i.e. thrown and not caught yet). If no exception is active, a state is represented as sequence of nodes enclosed in square brackets: for example, σ = [n0,... , nk] is a state whose top node is nk. If an exception is active, we append the symbol  to the sequence of nodes,
+i.e. σ  abbreviates ⟨σ, true⟩. Pushing a node n on a stack σ is written as σ : n.
+The access control context of a state is defined as the set of protection domains visited after the last privileged call (if any). Notice that, in what follows, we will write x for a singleton set {x}, when unambiguous.
+Definition 2.3 We deﬁne the access control context Γ(σ) of a state σ as:
+Γ([]) = ∅	Γ(σ : n)= Γ(σ) ↑ n
+where, for each context γ and n ∈ N, we deﬁne:
+γ ↑ n  =	Dom(n)	if Priv(n)
+γ ∪ Dom(n)	otherwise
+Stack inspection is modeled by the minimal relation induced by the in- ference rules for the predicate ▶ below. The set of permissions granted to a state is just the intersection of the permissions associated to its access control context. We prefer to formalize stack inspection using a double indirection with access control contexts and permissions, because our static analysis will be independent from the security policy in force.
+Definition 2.4 We say that a permission P is granted to a state σ under the security policy Perm iff Γ(σ) ▶Perm P, where:
+
+
+P ∈ Perm(D)
+
+D ▶Perm P
+γ ▶Perm P	γ' ▶Perm P γ ∪ γ' ▶Perm P
+
+The transition relation D between states is defined in Table 1. A trace on
+⟨G, Perm⟩ is a derivation ⟨σ0, χ0⟩ D ··· D ⟨σk, χk⟩. An entry trace is a trace where σ0 = [nε] and χ0 = false. The reachability relation D states when there is an entry trace on ⟨G, Perm⟩ which can lead to a given state:
+⟨G, Perm⟩ D σ	σ D σ'
+
+⟨G, Perm⟩ D [nε]	⟨G, Perm⟩ D σ'
+
+
+
+Table 1 Operational semantics of CFGs.
+
+
+Well-formed CFGs
+We require our CFGs to obey some mild well-formedness constraints. We say that a CFG is well-formed iff, for each n, n' ∈ N \ nε:
+
+l(n)= check(P ) =⇒ / En' ∈ N. n —→ n'	(1a)
+l(n)= return =⇒ / En' ∈ N. ⟨n, n'⟩ ∈ E	(1b)
+| ε(µ(n)) | = 1	(1c)
+µ(n)= µ(n') =⇒ Dom(n)= Dom(n')	(1d)
+Priv(n) =⇒ l(n)= call	(1e)
+n −−· n' V n −−· n' =⇒ n' /= ε(µ(n))	(1f)
+µ(nε)= nε	(1g)
+
+Constraints (1a) and (1b) ensure, respectively, that check nodes have no out- going call edges and that return nodes do not have outgoing edges at all. Constraint (1c) states that each method has exactly one entry point. Af- ter this constraint, we abbreviate n —→ ε(µ(m)) with n —→ µ(m). Con- straint (1d) says that nodes in the same method are in the same protection domain. Note that constraints (1a)–(1d) reflect some peculiarities of Java-like bytecode: hence, CFGs extracted from bytecode always satisfy them. The other constraints are only technical, and help keeping the definition of our analysis short: (1e) says that only call nodes can be privileged; (1f) that in- traprocedural and interprocedural edges do not overlap; (1g) states that the entry point nε has no outgoing intraprocedural flow (therefore, it only makes sense to have nε as a call node).
+
+Adequacy of the model
+We briefly discuss some of the differences between our model and the Java security model [13]. Similar considerations hold for the .NET model [22].
+Java allows for the dynamic instantiation of permissions (e.g. an application that asks the user for a file name and then tries to open that file). Such parametric permissions are of the form P (x), where x ranges over the set of possible targets for the permissions of class P .
+in Java, a new thread upon creation inherits the access control context of its parent. When stack inspection is performed, both the context of the current thread and the contexts of all its ancestors are examined. In this way, a child thread cannot obtain an access which is not granted to its ancestors.
+our model only allows for code-centric security policies: permissions are granted to code according to its source, regardless of who is running it. JAAS [18], extends the Java security model by enabling user-centric access control policies, based on the principal who actually runs the code. Permis- sions can be granted to principals, and the doAs method allows a piece of code to be executed on behalf of a given subject. This is done by associating the (authenticated) subject running the code with the current access con- trol context. Stack inspection ensures that subjects are taken into account when access control is performed (see e.g. [15] for a formal specification).
+we do not model some advanced features like reflection and native methods. Also, we do not consider the side effects of some “dangerous” permissions (e.g. AllPermission, which may even breach the whole security system by replacing the JVM system binaries). Besides deeply affecting security, these features reduce the effectiveness of any analysis which aims at determining statically the permissions granted to running code.
+
+The Security Context Analysis
+Given a CFG G = ⟨N, E, Dom, Priv⟩, our static analysis computes an abstract graph G = ⟨N , E ⟩ taking into account the evolution of the security contexts in the traces of G. An abstract node n ∈ N is a triple ⟨n, γ, χ⟩ (abbreviated as nγχ when unambiguous). Intuitively, it represents a call stack with top node n, access control context γ and exception flag χ. An abstract edge
+n  ϕ
+
+—→ m
+models an execution that can flow from n
+to m
+if the security policy
+
+in force satisfies the condition ϕ. The root of G is n = ⟨nε, Dom(nε), false⟩.
+Our analysis is specified by the inference rules in Table 2. The abstract graph is constructed starting from the root, and then applying the inference rules to obtain new abstract edges and nodes. Technically, this is a forward,
+
+
+
+Table 2
+Abstract semantics of control flow graphs.
+
+
+monotone control flow analysis. The nodes are in N × 2D × Bool , and the edges are in (N × 2D × Bool )2 × 2(2 ×P). Since N , D and P are finite, then the abstract graph is finite, too.
+Before explaining the rules in Table 2, it is convenient to introduce some terminology and notation. First, we define the notion of paths over abstract CFGs (definition 3.1). Definition 3.3 is used to determine which abstract returns (and exception propagations) match abstract calls. This allows us to single out paths that model “valid” abstract executions. Definition 3.2 introduces the concepts of traversability and reachability. Intuitively, a path is traversable under a security policy if the policy satisfies all the conditions on the path edges. An abstract node is reachable under the policy if there exists a path leading to that node which is traversable under the policy.
+
+Definition 3.1 A path from n 
+to n 
+in G is a sequence n  ϕ1
+ϕk  n 
+
+0	k	0 —→ ··· —→	k
+where, for each i ∈ 1..k, n	ϕi  n ∈ E . We denote with Π(n , m ) the set
+i−1 —→ i
+of all paths from n to m , and with Π(n ) the set of all paths from n to n .
+We write Π(G ) to denote all the paths in the abstract graph G .
+Definition 3.2 Let n ∈ N and π = n  ϕ1	ϕk  n . We deﬁne:
+0 —→ ··· —→ k
+
+Φ(n ) =	  Φ(π)	Φ(π) =   ϕi
+
+
+By convention, Φ(n )= false if n /∈ N , and Φ(π)= true if π = [].
+Definition 3.3 Let nγ, n'γ'χ' ∈ N . We write nγ «ϕ n'γ'χ' when n —→ µ(n'), γ' = (γ ↑ n) ∪ Dom(n'), and there exists a path from ε(µ(n'))γ' to n'γ'χ' s.t.
+
+w(π)= 0 and Φ(π)= ϕ. The weight of paths and edges in G are deﬁned as:
+
+
+w(π) =
+|π|
+
+
+i=1
+w(π[i — 1] —→ π[i])	w(nγχ —→ n'γ'χ')  =
+1	if n —→ n'
+0	otherwise
+
+Constraint (1f) guarantees that abstract edges representing interprocedural flow have unit weight, while intraprocedural ones have null weight. This con- straint could be removed by labelling the abstract edges with their weight.
+We now introduce the “concrete” counterpart of definition 3.2 above. The traversability condition on a trace is the conjunction of the (unevaluated) access control tests encountered. We formally relate the traversability of paths to that of traces in Theorem 3.6.
+Definition 3.4 Given a trace τ = σ0χ0 Dl1 ··· Dlk σkχk, we deﬁne:
+Φ(τ )=  i=1..k Φ(σi−1 χi−1 Dli σiχi)
+
+
+
+Φ(σ : n, χ Dl σ'χ')= 
+
+Γ(σ : n) /▶ P	if l(n)= check(P ), l = fail true	 otherwise
+
+We here provide some intuition about the rules in Table 2. Consider call first. If there is a call from node n to n', and the access control context before the call is γ, then the context after the call comprises the protection domain of n', plus either that of n if n is privileged, or γ if not. The rule pass says that, if a node n tests for permission P in the context γ, there is an edge labelled γ ▶ P leading to m and preserving the context. Similarly, the rule
+ fail says that there is an edge γ /▶ P leading to an exception. The rule return states that, if n' is a return and there is a call node n with context γ that matches the return node (see definition 3.3 below), then there is an edge from n to m while preserving the context γ. The rule propagate states that, if the call n with context γ can match a node n' while throwing an exception, then the exception is propagated to n.
+Practical considerations suggest us that the size of an abstract graph does not grow exponentially, but it is actually linear in the number of nodes of the original CFG. In particular:
+the exponential factor 2D above only occurs when the number of protection domains is proportional to the number of nodes. Actually, the number of protection domains can be considered as a constant, because it depends on static properties of the loaded code (i.e. code origin and digital signatures).
+
+each security check gives rise to a bifurcation in the abstract graph. Then, our approximation to the number of abstract nodes hides an exponential factor in the number of checks. However, the number of security checks in CFGs is usually small: indeed, access control tests are only inserted to guard methods accessing critical resources.
+when some protection domain is statically bound to permissions by the security policy, it is sometimes possible to partially evaluate the conditions on the abstract edges. In particular, an edge labelled γ ▶ P can be removed when, for some D ∈ γ with static permissions, P is not granted to D.
+Definition 3.5 Let Perm be a security policy. We deﬁne:
+
+Perm |=	true
+Perm |= (γ ▶ P ) ⇐⇒ γ ▶Perm P
+Perm |= ϕ ∧ ϕ'	⇐⇒ Perm |= ϕ and Perm |= ϕ'
+Perm |=	ϕ	⇐⇒ it is not the case that Perm |= ϕ
+
+The following theorem states that our analysis is sound w.r.t. the opera- tional semantics of CFGs: for each execution trace in G, there exists a corre- sponding path in G mimicking the evolution of the access control contexts.
+Theorem 3.6 (Soundness) Let ⟨G, Perm⟩Dτ = [nε]D·· ·D⟨σ : n, χ⟩. Then, there exists a path π ∈ Π(⟨n, Γ(σ) ∪ Dom(n), χ⟩) such that Φ(π)= Φ(τ ).
+The next theorem states that our analysis is also complete: for each path in G and security policy Perm that satisfies its reachability condition, there exists a corresponding execution trace in ⟨G, Perm⟩. This fact should not seem bizarre: indeed, completeness is only up to the precision of the CFG, which is a safe, approximated model of the analyzed program.
+Theorem 3.7 (Completeness) Let π ∈ Π(nγχ) and Perm be such that Perm |= Φ(π). Then, there exist τ, σ such that ⟨G, Perm⟩ D τ D ⟨σ : n, χ⟩, γ = Γ(σ) ∪ Dom(n) and Φ(τ D ⟨σ : n, χ⟩)= Φ(π).
+Our analysis supports a form of incremental computation, though not in a fully compositional way. This is particularly useful for dynamic linking of code – the mechanism which allows a program to be extended at run-time. Our program model does not directly support this feature: so we require the CFG construction algorithm to correctly link the relevant CFGs, e.g. as in [24]. Indeed, this operation cannot be performed by looking at the CFGs alone, because CFGs do not carry enough information to restrict the set of targets of dynamically dispatched method invocations.
+
+We briefly show how the incremental computation of the analysis is per- formed. Assume we have a computed J , when the CFG J' is loaded. The CFG construction algorithm singles out the set E˜ of resolved edges between J and J', i.e. those call edges n —→ m such that n, m do not belong both to the same CFG. The linked graph J daE˜ J' contains the nodes and the edges
+from both J and J', plus the resolved edges E˜.
+To obtain (J daE˜ J') from J , it suffices to compute the closure of the set of rules in Table 2, starting from the set of resolved edges and from the entry point of J'. Note that adding new executable traces to a CFG never affects the analysis of the old ones.
+
+Program Transformations
+In this section we show that our static analysis provides us with an effective basis for several code optimizations. This is not a trivial task, because per- forming interprocedural optimizations in the presence of stack inspection may break security. Indeed, stack inspection deeply relies on the structure of the call stack, which may be altered by such optimizations.
+All the program transformations below have to be revalidated every time that the security policy is updated. This form of dynamic deoptimization is common practice in the presence of just-in-time compilers, e.g. the Java HotSpot Compiler [25]. Again, note that our analysis need not be recomputed.
+
+Elimination of the redundant checks
+The first application of our analysis detects the redundant checks occurring in a program, i.e. those which always pass, regardless of the execution trace.
+Definition 4.1 Let l(n) = check(P ). We say that n is redundant w.r.t. a security policy Perm when, for each call stack σ:
+⟨J, Perm⟩ D σ : n  =⇒  Γ(σ : n) ▶Perm P
+
+The following theorem states conditions to recognize redundant checks, so enabling the compiler to safely remove them from the code. Actually, redundant checks can only be disabled in the presence of dynamic linking, because loading a new method may add new traces where the permission is no longer granted.
+Theorem 4.2 A check node n is redundant w.r.t. a security policy Perm if and only if Perm |= Φ(nγ ) for all contexts γ.
+
+The reachability condition Φ(nγ ) can be computed during the costruction of the abstract graph. This requires accumulating the traversability conditions on the edges leading to abstract check nodes.
+Dead code elimination
+Dead code elimination is a program transformation which allows the compiler to discard unreachable or useless pieces of code. This optimizazion reduces both the size of the generated bytecode and the total application running time (e.g. when code has to be downloaded from the network).
+The following theorem allows to detect (and remove) those methods which cannot be reached due to security restrictions:
+Theorem 4.3 Let n = ε(µ(n)). If Perm |= Φ(nγ) for all nγ ∈ J , then there are no σ and m ∈ µ(n) such that ⟨J, Perm⟩ D σ : m.
+Method inlining
+Method inlining is an optimization that replaces a method invocation with a copy of the called method code. As a side effect, the protection domain of the inlined method is ignored when performing stack inspection. Our analysis gives us the means to compute the set of method invocations that can be safely inlined. Intuitively, a method invocation can be inlined if the outcome of the security checks is not affected by ignoring the protection domain of the inlined method.
+We adopt the so-called original version inlining approach [16], which al- ways considers the original version of the callee and the current version of the caller when performing inlinings. This can be obtained by duplicating the original code of the inlined method. Let n˙ be the node candidate for inlining,
+
+and n˙
+—→ n'. We assume that the method invocation represented by n˙
+can
+
+be statically dispatched, i.e. it has exactly one callee, represented by µ(n'). We also require that the protection domain of µ(n') is isolated in the CFG,
+i.e. its name is different from the other domain names (it suffices to assign to
+Dom(n') a fresh name).
+We formally specify in definition 4.4 when a method invocation can be safely inlined. The condition (2a) below guarantees static dispatching of n˙ , as well as that n˙ is not a recursive call (otherwise inlining makes little sense). The condition (2b) says that there is a single callee: this is enforced by the original version inlining approach. The condition (2c) ensures that the protection
+
+domain of n˙
+is isolated. These conditions, apart from n˙
+being not recursive,
+
+can easily be satisfied, as noted above. The key condition is (2d): it guarantees that, for all the permissions that can be possibly checked after the inlined call,
+
+
+
+the security policy agrees on the protection domains of n˙
+and n'.
+
+Definition 4.4 We say that n˙ —→ n' is inlineable in J w.r.t. Perm iff:
+
+n˙ —→ n =⇒ n = n' ∧ n ∈/ µ(n˙ )	(2a)
+
+n —→ n' =⇒ n = n˙ 
+(2b)
+
+n ∈/ µ(n') =⇒ Dom(n) /= Dom(n')	(2c)
+
+
+l(m)= check(P )
+Dom(n') ∈ γ' 
+=⇒	P ∈ Perm(n˙ ) ⇐⇒ P ∈ Perm(n')	(2d)
+
+
+hold for all n, m, γ, γ', ϕ. We write n˙ γ ⇒ n'γ'χ' when:
+Eπ, n'', γ''. n˙ γ —→ n''γ'' ∧ π ∈ Π(n''γ'', n'γ'χ')
+
+Next, we define the effect of the method inlining transformation on CFGs.
+
+Instead of substituting n˙
+for µ(n') and adjusting the edges accordingly, we
+
+equivalently operate on the semantics of the transformed CFG. The effect of
+
+the inlining of n˙
+on call stacks is specified by the function inl n˙
+in Table 3.
+
+Given a state σ, inl n˙ (σ) is obtained by removing all the occurrences of n˙ in
+σ (except when n˙ is in top position). The operational semantics of a CFG
+
+after the inlining of n˙
+is defined by the transition relation Dn˙
+in Table 3.
+
+For instance, the rules Dn˙
+Dn˙
+call2
+state, respectively, that a method
+
+invocation proceeds as usual when the calling node is not n˙ , otherwise n˙ is
+removed from the call stack.
+Definition 4.5 Let J = ⟨N, E, DomG, PrivG⟩. The n˙ -inlined version of J is
+J˙ = ⟨N, E, DomG˙ , PrivG˙ ⟩, where:
+
+
+Priv
+
+(n) =  PrivG(n˙ )	if n˙ —→ µ(n)
+
+
+
+Dom
+
+(n) = DomG(n˙ )	if n˙ —→ µ(n)
+
+
+The following theorem states the correctness of method inlining: each trace in the original CFG corresponds to a trace in the n˙ -inlined version of the CFG.
+Theorem 4.6 If n˙ is inlineable in J w.r.t. Perm, then:
+⟨J, Perm⟩ D τ	⇐⇒	⟨J˙ , Perm⟩ Dn˙ inl n˙ (τ )
+
+
+
+Table 3
+Effect of inlining n˙ on call stacks (top) and transitions (bottom).
+
+Conclusions and related work
+We have developed a technique to perform program transformations in the presence of stack inspection and dynamic security policies. The technique relies on the definition of our Security Context Analysis. The analysis is sound and complete with respect to the control flow graphs derived from the bytecode (recall from Section 2 that these graphs safely approximate the actual behavior). Our analysis makes various optimizations possible. We focussed here on elimination of redundant checks and of dead code, and on method inlining. It is worthwhile noting that our analysis can take advantage of the control flow graphs generated by the just-in-time optimizers, e.g. the HotSpot compilers embedded in the latest Java Virtual Machines [25]. This would also make our technique directly exploitable by these tools, e.g. to produce larger methods by inlining, so allowing for further optimizations.
+Many authors advocated the use of static techniques in order to understand and optimize stack inspection, among them ourselves [2,3,4,5]. As far as we can tell, our current proposal is the first one that can deal with dynamic security policies.
+Besson, Jensen, Le M`etayer and Thorn [7] formalize classes of security properties through a linear-time temporal logic. They show that a large class of policies (including stack inspection) can be expressed in this formalism. Model checking is then used to prove that local security checks enforce a given global security policy. Their verification method is based on the translation from linear-time temporal formulae to deterministic finite-state automata, and
+
+it can be used to optimize stack inspection. Based on the same model, [6] develops a static analysis that computes, for each method, the set of its secure calling contexts with respect to a given global property. When a method is invoked from a secure calling context, its execution never violates the global property. For some optimizations, e.g. for method inlining, this technique is even too powerful, as the information about calling contexts is unnecessary.
+Esparza, Kuˇcera and Schwoon [11] formalize stack inspection in terms of model checking pushdown systems. Obdrˇz´alek [20] uses the same technique to accurately model Java exception handling. A suitable combination of the two will then be an alternative approach to ours. Since our model is specifically tailored on stack inspection, we think that our analysis may be implemented and exploited more efficiently than a general method such as model checking pushdown systems.
+Exploiting the access control logic of [1], Wallach, Appel and Felten [28] propose an alternative semantics of eager stack inspection, called security- passing style. This technique consists of tracking the security state of an execution as an additional parameter of each method invocation. This allows for interprocedural compiler optimizations that do not interfere with stack inspection (at the cost of more expensive method calls).
+Pottier, Skalka and Smith [21] address the problem of stack inspection in λsec, a typed lambda calculus enriched with primitive constructs for enforcing security checks and managing permissions, and no exception handling. Stack inspection never fails on a well typed program, because the set of permissions granted at run-time always includes the security context. This analysis sup- ports all-or-nothing optimizations that remove the security manager when all the checks are redundant. Instead, we can single out and remove individual redundant checks.
+Fournet and Gordon [12] investigate the problem of establishing the cor- rectness of program transformations in the presence of stack inspection. They present an equational theory, together with a coinductive proof technique, for the λsec calculus. They study how stack inspection affects program behavior, proving that certain function inlinings and tail-call eliminations are correct. The equational theory is used to reason on the (somewhat limited) security properties actually guaranteed by stack inspection. Here, we are more con- cerned with efficient (semantically-based) optimization procedures to be used on the field, rather than with a general reasoning framework. Indeed, it is unclear how to (mechanically) derive a procedure (e.g. a confluent terminat- ing rewriting system) to ensure correctness of program transformations under security constraints.
+Koved, Pistoia and Kershenbaum [17] address the problem of computing
+
+the set of permissions a class needs in order to execute without throwing se- curity exceptions. Also this analysis suffers from allowing only all-or-nothing optimizations, as in [21]. The analysis is built over access rights invocation graphs. These flow graphs are context-sensitive: each node is associated also with its calling context, i.e. with its target method, receiver and parameters values. In this way, the analysis in [17] can deal with parametric permissions and multi-threading. Our approach can gain precision through the exploita- tion of these graphs. We plan to study this issue in future work.
+
+References
+M. Abadi, M. Burrows, B. Lampson, and G. Plotkin. A calculus for access control in distributed systems. ACM Transactions on Programming Languages and Systems, 1993.
+M. Bartoletti, P. Degano, and G. L. Ferrari. Static analysis for stack inspection. In Electronic Notes in Theoretical Computer Science, 2001.
+M. Bartoletti, P. Degano, and G. L. Ferrari. Security-aware program transformations. In Proc. 8th Italian Conference on Theoretical Computer Science, 2003.
+M. Bartoletti, P. Degano, and G. L. Ferrari. Static analysis for eager stack inspection. In
+Workshop on Formal Techniques for Java-like Programs, 2003.
+M. Bartoletti, P. Degano, and G. L. Ferrari. Stack inspection and secure program transformations. To appear in International Journal of Information Security, 2004.
+F. Besson, T. de Grenier de Latour, and T. Jensen. Secure calling contexts for stack inspection. In Proc. 4th Conference on Principles and Practice of Declarative Programming, 2002.
+F. Besson, T. Jensen, D. Le M´etayer, and T. Thorn. Model checking security properties of control flow graphs. Journal of Computer Security, 2001.
+J.-D. Choi, D. Grove, M. Hind, and V. Sarkar. Efficient and precise modeling of exceptions for the analysis of Java programs. In Workshop on Program Analysis For Software Tools and Engineering, 1999.
+J. Clemens and M. Felleisen. A tail-recursive semantics for stack inspections. In P. Degano, editor, Proc. 12th European Symposium on Programming, 2003.
+U. Erlingsson and F. B. Schneider. IRM enforcement of Java stack inspection. In IEEE Symposium on Security and Privacy, 2000.
+J. Esparza, A. Kuˇcera, and S. Schwoon. Model-checking LTL with regular valuations for pushdown systems. In Proc. 4th International Symposium on Theoretical Aspects of Computer Software, 2001.
+C. Fournet and A. D. Gordon. Stack inspection: theory and variants. ACM Transactions on Programming Languages and Systems, 2003.
+L. Gong. Inside Java 2 platform security: architecture, API design, and implementation. Addison-Wesley, 1999.
+D. Grove and C. Chambers. A framework for call graph construction algorithms. ACM Transactions on Programming Languages and Systems, 2001.
+G. Karjoth. An operational semantics for Java 2 access control. In Proc. 13th Computer Security Foundations Workshop, 2000.
+
+
+O. Kaser and C. R. Ramakrishnan. Evaluating inlining techniques. Computer Languages, 1998.
+L. Koved, M. Pistoia, and A. Kershenbaum. Access rights analysis for Java. In Proc. 17th ACM conference on Object-oriented Programming, Systems, Languages, and Applications, 2002.
+C. Lai, L. Gong, L. Koved, A. Nadalin, and R. Schemers. User authentication and authorization in the Java platform. In Proc. 15th Annual Computer Security Application Reference, 1999.
+F. Nielson, H. R. Nielson, and C. L. Hankin. Principles of Program Analysis. Springer-Verlag, 1999.
+J. Obdrˇz´alek. Model checking java using pushdown systems. In Workshop on Formal Techniques for Java-like Programs, 2002.
+F. Pottier, C. Skalka, and S. Smith. A systematic approach to static access control. In Proc. 10th European Symposium on Programming, 2001.
+V. Razmov. Security in untrusted code environments: Missing pieces of the puzzle. Dept. Computer Science and Engineering, Univ. of Washington, 2002.
+S. Sinha and M. J. Harrold. Analysis and testing of programs with exception handling constructs. Software Engineering, 2000.
+A. Souter and L. Pollack. Incremental call graph reanalysis for object-oriented software maintenance. In IEEE International Conference on Software Maintenance, 2001.
+Sun Microsystems. The Java HotSpot Virtual Machine (White Paper).
+V. Sundaresan, L. Hendren, C. Razafimahefa, R. Vall´ee-Rai, P. Lam, E. Gagnon, and C. Godin. Practical virtual method call resolution for Java. In Proc. 15th ACM SIGPLAN Conference on Object-Oriented Programming Systems, Languages & Applications, 2000.
+F. Tip and J. Palsberg. Scalable propagation-based call graph construction algorithms. In Proc. 15th ACM SIGPLAN Conference on Object-Oriented Programming Systems, Languages & Applications, 2000.
+D. S. Wallach, A. W. Appel, and E. W. Felten. SAFKASI: a security mechanism for language- based systems. ACM TOSEM, 2001.
+
+A	Proofs
+Definition A.1 Consider a trace τ on the following form:
+σ0 χ0 Dl0 σ1 χ1 Dl1 ··· Dlk−1 σk χk
+For each i, j ∈ 0..k, we write i «r j iff:
+li = call ∧ i = max{ h ∈ 0..j — 1 | w(τ, h, j)= 1 }
+For each 0 ≤ i ≤ j ≤ k, the weight of the trace τ [i..j] is deﬁned as follows:
+
+
+w(τ, i, j)  =
+j−1
+w(lh)
+h=i
+
+where the weight of a transition with label l is deﬁned as:
+
+
+w(l) =
+—1	if l = return or l = propagate
+0	otherwise
+
+Lemma A.2 Let τ = [nε] D ··· D ⟨σ : n : n', χ⟩ be a trace of length k. Then:
+n —→ µ(n')	(A.1a)
+Ei ∈ 0..k — 1. τ [i]= σ : n ∧ i «r k	(A.1b)
+Proof. We proceed by induction on the length of the trace. The base case k = 0 holds trivially, because σ0 = [nε] does not satisfy the premises of the lemma. For the inductive case, assume (A.1a) and (A.1b) are true for all traces of length lower than k. Case analysis on the rule used to deduce σk−1χk−1 D σkχk gives:
+case [call ]:
+l(n)= call n —→ n'
+
+σ : n D σ : n : n'
+Here (A.1a) follows by the fact that n —→ n', and the index i which satisfies (A.1b) is just k — 1.
+case [return]:
+l(m)= return m' −−· n'
+σ : n : m' : m D σ : n : n'
+By the induction hypothesis, we have that:
+Ej ∈ 0..k — 2. σjχj = ⟨σ : n : m', false⟩	(A.2)
+Since any derivation for σ : n : m' requires at least one step, j > 0. Then, the induction hypothesis on j — 1 gives n —→ µ(m'), and:
+Ei ∈ 0..j — 1. σiχi = ⟨σ : n, false⟩	(A.3) Since m' −−· n', it follows that µ(m') = µ(n'). Then, n —→ µ(m') implies
+n —→ µ(n'). This proves (A.1a), and (A.1b) is satisfied by the index i
+in (A.3).
+case [pass]:
+l(m')= check(P )	Γ(σ : n : m') ▶Perm P	m' −−· n' σ : n : m' D σ : n : n'
+
+By the induction hypothesis, n —→ µ(m'), and:
+Ei ∈ 0..k — 2. σiχi = ⟨σ : n, false⟩	(A.4)
+As in the previous case, µ(m') = µ(m) implies that n —→ µ(n'), which proves (A.1a). The index i given by (A.4) satisfies (A.1b).
+case [fail ]:
+l(n')= check(P )	Γ(σ : n : n') /▶Perm P
+
+σ : n : n' D σ : n : n' 
+Here (A.1a) and (A.1b) follow directly by the induction hypothesis.
+case [catch]:
+m' −−· n'
+σ : n : m'  D σ : n : n'
+By the induction hypothesis, we have n —→ µ(m'), and:
+Ei ∈ 0..k — 2. σiχi = ⟨σ : n, false⟩	(A.5)
+Since m' −−· n', then µ(m')= µ(n'). So, n —→ µ(m') implies n —→ µ(n'), which proves (A.1a). Equation (A.1b) is satisfied by the index i in (A.5).
+case [propagate]:
+m' /−−· 
+σ : n : n' : m'  D σ : n : n' 
+By the induction hypothesis, we have that:
+Ej ∈ 0..k — 2. σjχj = ⟨σ : n : n', false⟩	(A.6)
+Since any derivation for σ : n : n' requires at least one step, j > 0. Then, the induction hypothesis on j — 1 gives n —→ µ(n'), and:
+Ei ∈ 0..j — 1. σiχi = ⟨σ : n, false⟩
+Definition A.3 Let τ = σ0χ0 Dl1 ··· Dlk σkχk. We deﬁne the flattening of τ
+as b(τ )= b(τ, 0, k), where, for 0 ≤ i ≤ j ≤ k:
+σjχj	if i = j
+Φ(r [h..j])
+b(τ, i, j)=	b(τ, i, h) —————→ σjχj	if i ≤ h «r j — 1, w(lj)= —1
+
+b(τ, i, j — 1) Φ(r [j−1..j])
+σjχj
+otherwise
+
+
+ϕ1
+Lemma A.4 Let τ be a trace of length k, with b(τ )= σ χ
+
+ϕ
+σ χ .
+
+0 0 —→ ··· —→  h h
+h ≤ k	(A.7a)
+σ0χ0 = τ [0], σhχh = τ [k]	(A.7b)
+Φ(τ )=	i=0..h ϕi	(A.7c)
+Proof. We won’t go through the details of the proof for (A.7a) and (A.7b), because they are immediate from definition A.3. The proof of (A.7c) is by induction on the length of τ . If k = 0, then b(τ )= σ0χ0, and by convention,
+∅ = true = Φ(τ ).
+For the inductive case, let k > 0. We proceed by case analysis on the rule applicable to compute b(τ, 0, k). The first rule cannot be applied, because k > 0. The second rule, requiring h «r k—1, σk−1χk−1Dlσkχk and w(l)= —1, gives:
+Φ(r [h..k])
+b(τ ) = b(τ, 0, h) —————→ σkχk
+By the induction hypothesis, Φ(τ [0..h]) =	i=0..h−1 ϕi. Then:
+Φ(τ ) = Φ(τ [0..h]) ∧ Φ(τ [h..k]) = ( i=0..h−1 ϕi) ∧ ϕh =	i=0..h ϕi
+The third rule in the definition of b is applicable in any other case, and it gives:
+Φ(r [k−1..k])
+b(τ ) = b(τ, 0,k — 1) ———————→ σkχk
+By the induction hypothesis, Φ(τ [0..k — 1]) =	i=0..h−1 ϕi. Then:
+Φ(τ ) = Φ(τ [0..k — 1]) ∧ Φ(τ [k — 1..k]) = ( i=0..h−1 ϕi) ∧ ϕh =	i=0..h ϕi
+Definition A.5 We say that τ = σ0χ0 D ··· D σkχk is positive when:
+∀i ∈ 1..k. w(τ, 0, i) ≥ 0
+Similarly, we say that τ is strictly positive when > holds in place of ≥.
+Lemma A.6 Let τ be a trace of length k. Then:
+0 «r k	=⇒	b(τ )= τ [0] —→ b(τ, 1, k)	(A.8)
+Proof. For k = 0, we have that 0 /«r 0, therefore (A.8) holds trivially. For
+k > 0, we prove (A.8) as a corollary of the following, more general, result.
+Let τ be a strictly positive trace, of length k > 0. Then:
+
+Φ(r [0..1])
+b(τ )= τ [0] —————→ b(τ, 1, k)	(A.9)
+
+We prove (A.9) by induction on the length of τ . For the base case, if k =0 there is nothing to prove. For the inductive case, let k > 0. We proceed by case analysis on the rule applicable to compute b(τ, 0, k). The first rule cannot be applied, because k > 0. The second rule, requiring h «r k — 1,
+τ [k — 1] Dl τ [k] and w(l)= —1, gives:
+
+Φ(r [h..k])
+b(τ ) = b(τ, 0, h) —————→ τ [k]	(A.10)
+Consider τ [0..h]. Since h «r k — 1 and w(τ [k — 1] D τ [k]) = —1, if it were h = 0 then w(τ, 0, k) = 0, which would contradict our assumption about τ being strictly positive. Therefore, h > 0. Since any prefix of a strictly positive
+trace is strictly positive itself, we can apply the induction hypothesis on τ [0..h] to obtain:
+Φ(r [0..1])
+b(τ, 0, h) = τ [0] —————→ b(τ, 1, h)	(A.11)
+Now consider τ [1..k]. Since h ≥ 1, the second rule in the definition of b gives:
+
+Φ(r [h..k])
+b(τ, 1, k) = b(τ, 1, h) —————→ τ [k]	(A.12)
+Putting together (A.10), (A.11) and (A.12), we obtain:
+
+
+Φ(r [h..k])
+b(τ ) = b(τ, 0, h) —————→ τ [k]
+Φ(r [0..1])
+
+
+Φ(r [h..k])
+
+= τ [0] —————→ b(τ, 1, h) —————→ τ [k]
+Φ(r [0..1])
+= τ [0] —————→ b(τ, 1, k)
+The third rule in the definition of b is applicable in any other case, and it states:
+Φ(r [k−1..k])
+b(τ ) = b(τ, 0,k — 1) ———————→ τ [k]	(A.13)
+If k = 1, by the first rule in the definition of b, it follows that b(τ, 0, k—1) = τ [0] and b(τ, 1, k) = τ [k], so we are done. Otherwise, if k > 1 we can apply the induction hypothesis on τ [0..k — 1] (a prefix of a strictly positive trace) to obtain:
+Φ(r [0..1])
+b(τ, 0,k — 1) = τ [0] —————→ b(τ, 1,k — 1)	(A.14)
+Now consider τ [1..k]. The second rule in the definition of b is not applicable to compute b(τ [1..k]) – otherwise it would have been applied also to compute b(τ [0..k]). Thus, the third rule gives:
+
+Φ(r [k−1..k])
+b(τ, 1, k) = b(τ, 1,k — 1) ———————→ τ [k]	(A.15)
+
+Putting together (A.13), (A.14) and (A.15), we obtain:
+
+Φ(r [k−1..k])
+b(τ ) = b(τ, 0,k — 1) ———————→ τ [k]
+Φ(r [0..1])	Φ(r [k−1..k])
+= τ [0] —————→ b(τ, 1,k — 1) ———————→ τ [k]
+Φ(r [0..1])
+= τ [0] —————→ b(τ, 1, k)
+This concludes the proof of (A.9). To prove (A.8), we just need to show that 0 «r k implies that τ is strictly positive – indeed, Φ(τ [0..1]) = true follows directly by definition 3.4. By definition A.1 we have that, for each j ∈ 1..k, w(τ, j, k) < 1. Now, let i ∈ 1..k. Then:
+w(τ, 0, i)  =  w(τ, 0, k) — w(τ, i, k)  >  1 — 1  =  0
+Lemma A.7 Let τ be a positive trace on ⟨J, Perm⟩. Let:
+
+
+b(τ ) = (σ
+ϕ1
+: n )χ
+ϕ
+(σ : n )χ
+
+0	0	0 —→ ··· —→	l	l	l
+Let γ0 = Γ(σ0) ∪ Dom(n0). If n0γ0χ0 ∈ N , then there exists a path:
+
+
+ϕ1
+π  = n γ χ
+ϕ
+n γ χ
+
+0 0 0
+—→ ··· —→
+l l  l
+
+in J such that w(π)= w(τ ), and γi = Γ(σi) ∪ Dom(ni) for each i = 1..l.
+Proof. Assume that τ consists of k steps: we proceed by induction on k. The base case k =0 requires τ = (σ0 : n0)χ0, which is positive. Since n0γ0χ0 ∈ N by hypothesis, the path π is just the single node n0γ0χ0, and w(π)=0 = w(τ ). For the inductive case, let k > 0, n0γ0χ0 ∈ N . We proceed by case analysis on the rule applicable to compute b(τ, 0, k). The first rule cannot be applied, because k > 0. The second rule requires h «r k — 1, w(lk) = —1,
+and it gives:
+Φ(r [h..k])
+b(τ ) = b(τ, 0, h) —————→ σkχk
+Consider first the trace τ ' = τ [0..h]. By definition A.5 it follows that each prefix of a positive trace is positive: therefore, τ ' is positive. Since the length of τ ' is h < k — 1 < k, and n0γ0χ0 ∈ N , then the induction hypothesis gives a path:
+
+π'  =  n γ χ  ϕ1
+ϕl−1
+n	γ	χ
+
+0 0 0 —→ ··· ——→
+l−1
+l−1
+l−1
+
+with w(π')= w(τ ') and γi = Γ(σi) ∪ Dom(ni) for i = 1..l — 1.
+Next, consider τ '' = τ [h..k — 1]. Since h «r k — 1, by definition A.1 we have that, for each j ∈ h..k — 1, w(τ, j, k — 1) ≤ 1. Now, let i ∈ h..k — 1.
+
+Then:
+w(τ, h, i) = w(τ, h, k — 1) — w(τ, i, k — 1) ≥ 1 — 1 = 0 It follows that τ '' is positive. Let:
+
+ϕ'
+b(τ '') = (σ' : n' )χ' —→
+ϕ'
+··· —→
+(σ' : n' )χ'
+
+0	0	0	p	p	p
+By lemma A.4, we have that:
+(σ' : n' )χ' = b(τ '')[0] = τ ''[0] = τ [h]
+
+0	0	0
+= τ '[h] = b(τ ')[l — 1] = (σl−1 : nl−1)χl−1
+(A.16)
+
+
+
+Let γ' = Γ(σ' ) ∪ Dom(n' ). By (A.16), γ'
+= γl−1 = Γ(σl−1) ∪ Dom(nl−1). It
+
+0	0	0	0
+follows that n' γ' χ' = nl−1γl−1χl−1 ∈ N . Since the length of τ '' is k—1—h < k,
+0 0 0
+we can apply the induction hypothesis to obtain a path:
+
+
+ϕ'
+π'' = n' γ' χ' —→
+
+ϕ'
+··· —→
+
+n' γ' χ'
+
+0 0 0	p p  p
+with w(π'') = w(τ '') = w(τ, h, k — 1) = 1 (because h «r k — 1), and γ' =
+Γ(σ') ∪ Dom(n') for i = 1..p.
+i	i
+By lemma A.4 and definition 3.3, ⟨σ' : n' , χ' ⟩ = τ [h] Dcall τ [h + 1]. So,
+
+0	0	0
+χ' = false, and τ [h + 1] is on the form σ' : n'
+: n, for some n ∈ N such
+
+0	0	0
+that n' —→ n. Since h «r k — 1, by lemma A.6 it follows that b(τ '') =
+τ [h] —→ b(τ, h + 1,k — 1). Lemma A.4 also ensures that the first element of
+b(τ, h + 1,k — 1) is just τ [h + 1]: then, b(τ '')= [τ [h],τ [h + 1],.. .], that implies
+n = n' and σ' = σ' : n' . Now, consider the first edge in π'', i.e. n' γ' —→ n' γ' .
+1	1	0	0	0 0	1 1
+Since w(π'') = 1 = w(π''[0..1]) and the weight of a path cannot decrease
+
+by adding new nodes, then w(π''[1..p]) = 0. Let ϕ =
+definition 3.3, n' γ' «ϕ n' γ' χ' .
+i=1..p
+ϕ'. Then, by
+
+0 0	p p  p
+Now, we have to deal with the two possible values of the label lk. Consider
+first the case lk = return. By lemma A.4, σ' : n' = τ [k — 1] and σl : nl = τ [k].
+p	p
+
+Since Dl
+is a return transition, it follows that l(n' ) = return, and σ' : n'
+
+k	p	p	p
+must be on the form σ' : n' : n' for some σ' and n'. By lemma A.2, there exists
+an index i ∈ 1..k — 2 such that i «r k — 1 and τ [i] = σ' : n'. Definition A.1 implies that, given a trace τ and an index j, there exists a unique index i such that i «r j.  Since h «r k — 1 by hypothesis, then h = i, and
+σ' = σ' : n' = τ [i]= τ [h]= σ' : n' . Therefore, the Dreturn rule applied at step
+p	0	0
+k instances to:
+l(n' )= return n' −−· nl
+p	0
+σ' : n' : n' D σ' : nl
+0	0	p	0
+
+Then, χl = false and γl = Γ(σl) ∪ Dom(nl) = Γ(σ' ) ∪ Dom(n' ) = γ' . The
+0	0	0
+ return rule instances to:
+l(n' )= return n' −−· nl	n' γ' «ϕ n' γ'
+p	0	0 0	p p
+n' γ'  ϕ	'
+
+
+Therefore, the path π = π' ϕ
+0
+
+nlγl
+0 —→ nlγ0
+is in J , and:
+
+w(π)= w(π')+ w(n' γ' ϕ  n γ' )= 1 + 0
+0 0 —→  l 0
+w(τ )= w(τ ')+ w(τ '')+ w(σ' : n' : n' D σ' : n' )= 1 + 1 — 1
+0	0	p	0	0
+Next, we consider the case lk = propagate. By lemma A.4, σ' : n'  =
+τ [k — 1] and σl : nl = τ [k]. The Dpropagate rule instances to:
+' /−−· 
+σ' : n'  D σ' 
+p	p	p
+
+
+With the same arguments used above, we deduce that σ'
+: n'
+= σ'
+= σl : nl,
+
+and γ' = γl. By the propagate rule:
+n' γ' «ϕ n' γ'	n' /−−· 
+0 0	p p	p
+n' γ'  ϕ	'  '
+0 0 —→ n0γ0 
+As above, the path π = π' ϕ n γ  is in J , and w(π)= w(τ ).
+—→  l l
+The third rule in the definition of b is applicable in any other case. Let
+τ ' = τ [0..k — 1] and ϕ = Φ(σk−1χk−1 Dl σkχk). The rule states that:
+
+
+b(τ ) = b(τ ') ϕ
+σkχk
+
+Then, σkχk = (σl : nl)χl. By the induction hypothesis, there exists a path:
+
+
+π'  =  n γ χ  ϕ1
+ϕl−1
+n	γ	χ
+
+0 0 0 —→ ··· ——→
+l−1
+l−1
+l−1
+
+with w(π')= w(τ ') and γi = Γ(σi) ∪ Dom(ni) for i = 1..l — 1. By case analysis on the value of the label lk, we have:
+case [call ]. By the Dcall rule:
+l(nl−1)= call nl−1 —→ nl σl−1 : nl−1 D σl−1 : nl−1 : nl
+
+Then, σl = σl−1 : nl−1, and χl−1 = χl = false. By definition 2.3:
+γl  = Γ(σl−1 : nl−1) ∪ Dom(nl)
+= Γ(σl−1) ↑ nl−1 ∪ Dom(nl)
+=	Γ(σl−1) ∪ Dom(nl−1) ↑ nl−1 ∪ Dom(nl)
+= γl−1 ↑ nl−1 ∪ Dom(nl) The call rule gives:
+l(nl−1)= call nl−1 —→ nl	nl−1γl−1 ∈ N 
+
+nl−1γl−1 —→ nlγl
+Then, π = π' —→ nlγl is in J , and w(π)= w(π')+1 = w(τ ')+1 = w(τ ).
+case [pass]. By the Dpass rule:
+l(nl−1)= check(P )	Γ(σl−1 : nl−1) ▶Perm P	nl−1 −−· nl σl−1 : nl−1 D σl−1 : nl
+Then, σl = σl−1 and χl−1 = χl = false. By definition 3.4, it follows that
+ϕ = Γ(σl−1 : nl−1) ▶ P . Since nl−1 is not privileged (constraint (1e)), then:
+γl−1 = Γ(σl−1) ∪ Dom(nl−1) = Γ(σl−1 : nl−1) Then, ϕ = γl−1 ▶ P , and by the pass rule:
+l(nl−1)= check(P )	nl−1γl−1 ∈ N	nl−1 −−· nl
+γl−1 ▶P
+nl−1γl−1 ————→ nlγl−1
+By constraint (1d), γl = Γ(σl) ∪ Dom(nl) = Γ(σl−1) ∪ Dom(nl−1) = γl−1.
+
+Then, π = π' γl−1 ▶P
+nlγl
+is in J , and w(π)= w(π')+0 = w(τ ')= w(τ ).
+
+case [fail ]. By the Dfail rule:
+l(nl−1)= check(P )	Γ(σl−1 : nl−1) /▶Perm P σl−1 : nl−1 D σl−1 : nl−1 
+Similarly to the previous case, ϕ = Γ(σl−1 : nl−1) /▶ P = γl−1 /▶ P , and
+σl : nl = σl−1 : nl−1, γl = γl−1. Then, by the fail rule:
+l(nl−1)= check(P )	nl−1γl−1 ∈ N γl−1 /▶P
+nl−1γl−1 ————→ nl−1γl−1 
+
+Then, π = π' γl−1 /▶P  n γ  is in J , and w(π)= w(τ ).
+————→ l l
+case [catch]. By the Dcatch rule:
+nl−1 −−· nl
+σl−1 : nl−1  D σl−1 : nl
+Here σl = σl−1.  By constraint (1d), γl = γl−1, and, by definition 3.4,
+ϕ = true. Then, by the catch rule:
+nl−1γl−1  ∈ N	nl−1 −−· nl
+nl−1γl−1  —→ nlγl−1
+The path π = π' —→ nlγl is in J , and w(π)= w(π')+0 = w(τ ')+0 = w(τ ).
+Proof of Theorem 3.6 Let τ = [nε] D ··· D ⟨σ : n, χ⟩ be a trace on
+⟨J, Perm⟩. Since τ cannot contain intermediate states on the form [] or [] ,
+
+ϕ1
+it follows that τ is positive. Let b(τ ) = [n ]
+ϕ
+(σ : n)χ.  Since
+
+ε —→ ··· —→
+nε∅∈ N , then lemma A.7 ensures that there exists a path π in J whose last node is ⟨n, Γ(σ) ∪ Dom(n), χ⟩, and Φ(π)= i ϕi = Φ(τ ) by lemma A.4.
+Lemma A.8 Let ⟨J, Perm⟩ D τ. Then:
+Perm |= Φ(τ )	(A.17a)
+∀Perm' |= Φ(τ ). ⟨J, Perm'⟩ D τ	(A.17b)
+Proof. We first prove (A.17a), by induction on the length of τ . For the base case τ = [] there is nothing to prove, because Φ([]) = true by convention. For the inductive case, let k be the length of τ , and consider the last step τ [k — 1] Dl τ [k] in the trace. According to definition 3.4, if l /∈ {pass, fail} then Φ(τ [k — 1..k]) = true: then, Perm |= Φ(τ [0..k — 1]) ∧ true follows by the induction hypothesis and by definition 3.5. If l = pass, then the last step of τ is on the form:
+l(n)= check(P )	Γ(σ : n) ▶Perm P	n −−· m σ : n D σ : m
+By definition 3.4, Φ(τ [k — 1..k]) = Γ(σ : n) ▶ P . By definition 3.5:
+Perm |= (Γ(σ : n) ▶ P ) ∧ Φ(τ [0..k — 1])
+⇐⇒ Γ(σ : n) ▶Perm P ∧ Perm |= Φ(τ [0..k — 1])
+
+which follows by the premises of the Dpass rule and by the induction hypothesis. The case l = fail is similar.
+For (A.17b), let Perm' |= Φ(τ ). The only steps in the derivation which are sensitive to the security policy are those labelled pass or fail . Let l(n)= check(P ), and σ : n Dpass σ : m be a transition on ⟨J, Perm⟩. Then, Γ(σ : n) ▶Perm P . Since Perm |= Φ(τ ) by (A.17a), then definition 3.4 implies that Perm |= Γ(σ : n) ▶ P . Now, we have assumed that Perm' |= Φ(τ ), so Perm' |= Γ(σ : n) ▶ P , too. Therefore, Γ(σ : n) ▶Perm' P , which enables the transition σ : n Dpass σ : m also on ⟨J, Perm⟩. The case fail is treated similarly.
+
+
+ϕ1
+Lemma A.9 Let π = n γ χ
+ϕ
+n γ χ
+be a path in J , Perm |=
+
+0 0 0 —→ ··· —→
+k k  k
+
+Φ(π) and ⟨J, Perm⟩ D τ ' D ⟨σ0 : n0, χ0⟩ for some τ ' and σ0 s.t. γ0 = Γ(σ0) ∪ Dom(n0). Then, there exists a positive trace τ such that ⟨J, Perm⟩ D τ ' D τ, and:
+
+b(τ ) = (σ
+ϕ1
+: n )χ
+ϕ
+(σ : n )χ
+(A.18a)
+
+0	0	0 —→ ··· —→	k	k	k
+Moreover, w(π)= w(τ ), Φ(π)= Φ(τ ), and, for each i ∈ 1..k:
+
+
+σ	=	σi−1 : ni−1	if w(π[i — 1] —→ π[i]) = 1
+σi−1	otherwise
+(A.18b)
+
+γi  =  Γ(σi) ∪ Dom(ni)	(A.18c)
+Proof. By induction on the derivation of π. The base case requires π =
+nεDom(nε), τ ' = [], σ0 = [], n0 = nε and χ0 = false. Let τ = [nε]. Then,
+⟨J, Perm⟩ D τ ' D τ , and the other statements of the lemma hold trivially. For the inductive case, we proceed by case analysis on the last rule used in the derivation of π. We consider only the cases call , return and pass – the other cases can be treated similarly.
+case [call ]. By the call rule:
+l(nk−1)= call nk−1γk−1 ∈ N	nk−1 —→ nk nk−1γk−1 —→ nk(γk−1 ↑ nk−1) ∪ Dom(nk)
+Then, ϕk = true and χk−1 = χk = false. By the induction hypothesis, there exists a positive trace τ '' such that ⟨J, Perm⟩ D τ ' D τ '', w(τ '') = w(π[0..k — 1]), Φ(τ '')= Φ(π[0..k — 1]), and:
+
+
+b(τ '') = (σ
+ϕ1
+: n )χ
+ϕk−1
+σ	: n
+
+0	0	0 —→ ··· ———→
+k−1
+k−1
+
+By the Dcall rule, we have:
+l(nk−1)= call nk−1 —→ nk σk−1 : nk−1 D σk−1 : nk−1 : nk
+Let σk = σk−1 : nk−1 and τ = τ '' D σk. The third rule in definition A.3 gives:
+
+
+b(τ ) = b(τ '') —→ σ : n
+= (σ
+ϕ1
+: n )χ
+ϕ
+(σ : n )χ
+
+k	k	0
+0	0 —→ ··· —→	k	k	k
+
+This proves (A.18a). For (A.18b), note that σk = σk−1 : nk is coherent with w(π[k — 1] —→ π[k]) = 1. For (A.18c), the induction hypothesis and def. 2.3 give:
+γk = (γk−1 ↑ nk−1) ∪ Dom(nk)
+= (Γ(σk−1) ∪ Dom(nk−1)) ↑ nk−1 ∪ Dom(nk)
+= (Γ(σk−1) ↑ nk−1) ∪ Dom(nk)
+= Γ(σk) ∪ Dom(nk)
+To conclude the proof of this case, note that the induction hypothesis gives:
+w(π)= w(π[0..k — 1]) + 1 = w(τ '')+1 = w(τ )
+Φ(π)= Φ(π[0..k — 1]) ∧ true = Φ(τ '')= Φ(τ )
+case [return]. By the return rule, there exist n and γ such that:
+l(n)= return nk−1 −−· nk	nk−1γk−1 «ϕk nγ
+
+nk−1
+ϕ
+γk−1 —→
+nkγ
+
+k−1
+
+Then, γk = γk−1 and χk = χk−1 = false. By the induction hypothesis, there exists a positive trace τ0 (of length l0) such that ⟨J, Perm⟩ D τ ' D τ0, and:
+w(τ0)= w(π[0..k — 1])	(A.19a)
+Φ(τ0)= Φ(π[0..k — 1])	(A.19b)
+ϕ1	ϕk−1
+b(τ0)= (σ0 : n0)χ0 —→ ··· ———→ σk−1 : nk−1	(A.19c)
+Moreover, for each i ∈ 1..k — 1:
+
+
+σ =	σi−1 : ni−1	if w(π[i — 1] —→ π[i]) = 1
+σi−1	otherwise
+(A.19d)
+
+γi = Γ(σi) ∪ Dom(ni)	(A.19e)
+
+
+
+Consider the path π'' used to derive nk−1γk−1 «ϕ
+nγ. By definition 3.3,
+
+nk−1 —→ ε(µ(n)), γ = (γk−1 ↑ nk−1) ∪ Dom(n), and π'' is on the form
+nk−1γk−1 —→ π' for some π' ∈ Π(ε(µ(n))γ, nγ) such that w(π') = 0 and Φ(π')= ϕk. By the Dcall rule, we can derive:
+l(nk−1)= call nk−1 —→ ε(µ(n)) σk−1 : nk−1 D σk−1 : nk−1 : ε(µ(n))
+By (A.19e), definition 2.3 and constraint (1d), we have that:
+γ = (γk−1 ↑ nk−1) ∪ Dom(n)
+=  Γ(σk−1) ∪ Dom(nk−1) ↑ nk−1 ∪ Dom(ε(µ(n)))
+= Γ(σk−1 : nk−1) ∪ Dom(ε(µ(n)))
+Then, we can apply the induction hypothesis to obtain a positive trace τ1
+(of length l1) such that ⟨J, Perm⟩ D τ ' D τ0 D τ1, and:
+w(τ1)= w(π') = 0	(A.20a)
+Φ(τ1)= Φ(π')= ϕk	(A.20b)
+
+ϕ'
+b(τ )= (σ' : n' )χ' —→
+ϕ'
+··· —→h
+(σ' : n' )χ'
+(A.20c)
+
+1	0	0	0
+h	h	h
+
+with σ'
+= σk−1 : nk−1, n'
+= ε(µ(n)), χ'
+= false, n'
+= n and χ'
+= false.
+
+Moreover for each i ∈ 1..h — 1:
+
+
+σ' =
+'
+i−1
+'
+i−1
+'
+i−1
+if w(π'[i — 1] —→ π'[i]) = 1 otherwise
+(A.20d)
+
+Since w(π') = 0, and the weight of a path is non-decreasing, it follows that w(π'[i] —→ π'[i + 1]) = 0 for each i ∈ 0..h — 1. Then, by (A.20d),
+' = σ' = σk−1 : nk−1. Thus, the Dreturn rule gives:
+l(n)= return nk−1 −−· nk σk−1 : nk−1 : n D σk−1 : nk
+Let τ = τ0 D τ1 D σk−1 : nk. We have just proved that ⟨J, Perm⟩ D τ ' D τ .
+By (A.19a) and (A.20a), it follows that:
+w(τ )  =  w(τ0)+ w(σk−1 : nk−1 D σk−1 : nk−1 : ε(µ(n)))
++ w(τ1)+ w(σk−1 : nk−1 : n D σk−1 : nk)
+= w(τ0)+1+0 — 1
+
+=  w(π[0..k — 1]) + w(nk−1γ
+ϕ
+k−1 —→ nkγk)= w(π)
+
+By (A.19b) and (A.20b), it follows that:
+Φ(τ ) = Φ(τ0) ∧ Φ(σk−1 : nk−1 D σk−1 : nk−1 : ε(µ(n)))
+∧  Φ(τ1) ∧ Φ(σk−1 : nk−1 : n D σk−1 : nk)
+= Φ(π[0..k — 1]) ∧ ϕk  = Φ(π)
+We now prove that τ is positive. Let i ∈ 0..l0 + l1 + 1. We have to consider three cases. If i ∈ 0..l0 — 1, then w(τ, 0, i)= w(τ0, 0, i) ≥ 0 follows directly from the fact that τ0 is positive. Otherwise, if i ∈ l0..l0 + l1, then, using also the fact that τ1 is positive:
+w(τ, 0, i) = w(τ0)+ w(τ0[k — 1] D τ1[0]) + w(τ1, 0,i — l0) ≥ 0
+The last case (i = l0 +l1 +1), is subsumed by the fact that w(τ )= w(π) ≥ 0.
+Let σk = σk−1. We have still to prove that:
+
+b(τ ) = (σ
+ϕ1
+: n )χ
+ϕ
+(σ : n )χ
+
+0	0	0 —→ ··· —→	k	k	k
+Recall that τ is on the form:
+
+⟨σ0 : n0, χ0⟩D·· ·D⟨σl
+: nl , χl ⟩D⟨σ' : n' , χ' ⟩D·· ·D⟨σ'
+: n' , χ' ⟩Dσk : nk
+
+0	0	0
+0	0	0
+l1	l1	l1
+
+For i ∈ 0..l1, let σl0 +i = σ', nl0+i = n' and χl0+i = χ'. Let l = l0 + l1 + 1,
+i	i	i
+σl = σk, nl = nk and χl = false. Therefore, τ can be rewritten as:
+⟨σ0 : n0, χ0⟩ D ··· D ⟨σl : nl, χl⟩
+By (A.20a), w(τ, l0,l — 1) = 1 + w(τ1, 0, l1)= 1. Let i ∈ l0 + 1..l — 1. Since
+τ1 is positive, we have that:
+w(τ, i, l — 1) = w(τ, l0,l — 1) — w(τ, l0, i) = 1 — (1 + w(τ1, 0, i)) ≤ 0
+This proves that l0 = max{ i ∈ 0..l — 1 | w(τ, i, l — 1) = 1 }, i.e. l0 «r l — 1. Since w(τ [l — 1..l]) = —1, the second rule in def. A.3 together with (A.19c) give:
+Φ(r [l0 ..l])
+b(τ )= b(τ0) —————→ σl : nl
+
+= (σ
+ϕ1
+: n )χ
+ϕk−1
+σ	: n
+ϕ
+σ : n
+
+0	0	0 —→ ··· ———→
+k−1
+k−1 —→ l	l
+
+Since nk−1 −−· nk, constraint (1f) implies that it cannot be nk−1 —→ nk, so w(π[k — 1] —→ π[k]) = 0. Then, (A.18b) is satisfied, because σk = σk−1. Moreover, by constraint (1d) it follows that:
+γk = γk−1 = Γ(σk−1) ∪ Dom(nk−1) = Γ(σk) ∪ Dom(nk)
+
+case [pass]. By the pass rule:
+l(nk−1)= check(P )	nk−1γk−1 ∈ N	nk−1 −−· nk
+γk−1 ▶P
+nk−1γk−1 ————→ nkγk−1
+Then, γk = γk−1, ϕk = γk−1 ▶ P and χk−1 = χk = false. By the induction hypothesis, there exists a positive trace τ '' such that ⟨J, Perm⟩Dτ 'Dτ '', and:
+
+
+b(τ '')= (σ
+ϕ1
+: n )χ
+ϕk−1
+σ	: n
+
+0	0	0 —→ ··· ———→
+k−1
+k−1
+
+Moreover, w(τ '') = w(π[0..k — 1]) and Φ(τ '') = Φ(π[0..k — 1]). Since, by assumption, Perm |= Φ(π)= Φ(π[0..k — 1]) ∧ (γk−1 ▶ P ), by definition 3.5 it follows that γk−1 ▶Perm P . Then, equation (A.18c) and constraint (1e) imply that Γ(σk−1 : nk−1) ▶Perm P . So we can apply the Dpass rule, that gives:
+l(nk−1)= check(P )	Γ(σk−1 : nk−1) ▶Perm P	nk−1 −−· nk σk−1 : nk−1 D σk−1 : nk
+Let τ = τ '' D σk = σk−1 : nk. The induction hypothesis gives:
+w(π)= w(π[0..k — 1]) + 0 = w(τ '')+0 = w(τ )
+Φ(π)= Φ(π[0..k — 1]) ∧ (γk−1 ▶ P )= Φ(τ '') ∧ (γk−1 ▶ P )= Φ(τ )
+
+
+The proofs for (A.18a)–(A.18c) are trivial.
+Proof of Theorem 3.7 Let π = nε∅ —→ ··· →—
+
+nγχ be a path on J , with
+
+Perm |= Φ(π). Let τ ' = [], σ0 = [], n0 = nε, χ0 = false and γ0 = ∅. Then,
+⟨J, Perm⟩Dτ ' D⟨σ0 : n0, χ0⟩, and γ0 = Γ(σ0) ∪ Dom(n0). By lemma A.9, there exists τ '' such that ⟨J, Perm⟩Dτ 'Dτ ''D⟨σ : n, χ⟩ and Φ(π)= Φ(τ ''D⟨σ : n, χ⟩). Let τ = τ ' D τ ''. Then, ⟨J, Perm⟩ D τ D⟨σ : n, χ⟩ and Φ(π)= Φ(τ D⟨σ : n, χ⟩).
+Proof of Theorem 4.2 Consider first the “if” part. By contradiction, as- sume there exists a trace τ = [nε] D ··· D σ : n on ⟨J, Perm⟩ such that Γ(σ : n) /▶ P . Then, by the Dfail rule, ⟨J, Perm⟩Dτ Dσ : n . Let γ = Γ(σ : n). By constraint (1e), γ = Γ(σ) ∪ Dom(n). By theorem 3.6, there exists a path π ∈ Π(nγ ) in J such that Φ(π) = Φ(τ ). By lemma A.8, Perm |= Φ(π). Since Φ(nγ ) = { Φ(π) | π ∈ Π(nγ ) }, then Perm |= Φ(nγ ) – contradic- tion.
+For the “only if” part, let n be a redundant check for permission P , i.e. Γ(σ : n) ▶ P whenever ⟨J, Perm⟩ D σ : n for some state σ. By contradiction, assume there exist a context γ such that Perm |= Φ(nγ ), i.e. there exists a
+
+path π ∈ Π(nγ ) such that Perm |= Φ(π). (definition 3.2). By theorem 3.7, there exist τ and σ such that ⟨J, Perm⟩ D τ D σ : n , Γ(σ) ∪ Dom(n) = γ, and Φ(τ D σ : n ) = Φ(π). Moreover, the last step in the trace must be on the form:
+l(n)= check(P )	Γ(σ : n) /▶Perm P
+
+σ : n D σ : n 
+because the only other rule leading to a state on the form σ : n is Dpropagate, which however requires n being a call node (lemma A.2). Now, by defini- tion 3.4:
+Φ(τ D σ : n )  =  Φ(τ ) Λ	Γ(σ : n) /▶ P	= Φ(τ ) Λ (γ /▶ P )
+Since Perm |= Φ(τ D σ : n ), by definition 3.5 it follows that Perm |= Φ(τ ) and Perm |= γ /▶ P . By constraint (1e), we have that γ = Γ(σ) ∪ Dom(n)= Γ(σ : n). Then, Γ(σ : n) /▶ P – contradiction with the assumption of n being redundant.
+Proof of Theorem 4.3 Let n = ε(µ(n)) and Perm |= Φ(nγ) for all nγ ∈ J . By contradiction, assume that ⟨J, Perm⟩ D σ : m for some σ and m ∈ µ(n). Since µ(nε) has no entry points, it must be σ /= []. So, σ is on the form σ' : n'. Consider the trace τ ' such that ⟨J, Perm⟩ D τ ' D σ : m. By lemma A.2, there exists an index i such that τ '[i]= σ' : n' and n' —→ n. Let τ = τ '[0..i] D σ : n, and γ = Γ(σ) ∪ Dom(n). Then, lemma A.8 ensures that Perm |= Φ(τ ), and, by theorem 3.6, there exists a path π ∈ Π(nγ) such that Φ(π) = Φ(τ ). It follows that Perm |= Φ(nγ) – a contradiction.
+Definition A.10 The effect of inlining n˙ —→ n' on context γ is deﬁned as:
+  γ	if Dom(n') ∈/ γ
+
+
+
+
+Lemma A.11 Let n˙ state σ,
+be inlineable in J, and J˙
+= inl n˙ (J). Then, for each
+
+ΓG˙ (inl n˙ (σ)) = Inl n˙ (ΓG(σ))
+Proof. Let γ = ΓG(σ), σ˙ = inl n˙ (σ) and γ˙ = ΓG˙ (σ˙ ). We proceed by induction
+on the size (number of nodes) of σ. The base case is σ = []. Then, σ˙ = [],
+γ = γ˙ = ∅, and ∅ = Inl n˙ (∅). For the inductive case, consider the last rule
+used in the derivation of σ˙ = inl n˙ (σ). We have the two following cases:
+if σ = σ' : n' and top(σ') /= n˙ , then inl n˙ (σ) = σ˙ ' : n', where σ˙ ' = inl n˙ (σ').
+Moreover, by condition (2b) of definition 4.4, it follows that n˙ /—→ µ(n'). Let
+γ' = ΓG(σ'), γ˙ ' = ΓG˙ (σ˙ '). We have to consider the following two subcases.
+
+If PrivG(n'), then γ = {DomG(n')}.  By definition 4.5, we have that
+
+PrivG˙ (n') and DomG˙ (n') = DomG(n'). Since n˙ implies that:
+/—→ µ(n'), definition A.10
+
+Inl n˙ (γ) = Inl n˙ (DomG(n')) = DomG(n') = Dom ˙ (n') = γ˙
+Otherwise, if ¬PrivG(n'), then:
+Inl n˙ (γ)= Inl n˙ (γ' ∪ DomG(n'))	by def. 2.3 (¬PrivG(n'))
+= Inl n˙ (γ') ∪ Inl n˙ (DomG(n'))	by def. A.10
+= γ˙ ' ∪ Inl n˙ (DomG(n'))	by the ind. hyp.
+= γ˙ ' ∪ Inl n˙ (Dom ˙ (n'))	by def. 4.5
+= γ˙ ' ∪ Dom ˙ (n')	by def. A.10
+
+= γ˙ 
+by def. 2.3 (¬Priv ˙ (n'))
+
+if σ = σ' : n˙ : n', then inl n˙ (σ)= σ˙ ' : n', where σ˙ ' = inl n˙ (σ'). Note that, by lemma A.2 and condition (2a) of definition 4.4, n˙ —→ µ(n'). Let γ' = ΓG(σ') and γ˙ ' = ΓG˙ (σ˙ '). We have to consider the following two subcases.
+If PrivG(n'), definition 4.5 states that PrivG˙ (n') and DomG˙ (n')= DomG(n˙ ).
+Then, γ = DomG(n') and γ˙ = DomG˙ (n'), so definition A.10 implies:
+Inl n˙ (γ) = Inl n˙ (DomG(n')) = DomG(n˙ ) = Dom ˙ (n') = γ˙
+Otherwise, if ¬PrivG(n'), there are two further subcases, according n˙ being privileged or not. If PrivG(n˙ ), then PrivG˙ (n') follows by definition 4.5, and:
+Inl n˙ (γ)= Inl n˙ (DomG(n˙ ) ∪ DomG(n'))	as PrivG(n˙ ), ¬PrivG(n')
+= DomG(n˙ )	by def. A.10
+= Dom ˙ (n')	by def. 4.5
+
+= γ˙ 
+Otherwise, if ¬PrivG(n˙ ), then:
+as Priv ˙ (n')
+
+Inl n˙ (γ)= Inl n˙ (γ' ∪ DomG(n˙ ) ∪ DomG(n'))	as ¬PrivG(n˙ ), ¬PrivG(n')
+= Inl n˙ (γ') ∪ DomG(n˙ )	by def. A.10
+= γ˙ ' ∪ DomG(n˙ )	by the ind. hyp.
+= γ˙ ' ∪ Dom ˙ (n')	by def. 4.5
+
+= γ˙ 
+as ¬Priv ˙ (n')
+
+Proof of Theorem 4.6 Let τ be on the form ⟨σ0, χ0⟩ D ··· D ⟨σk, χk⟩, with
+σ0 = [], χ0 = false. Then, inl n˙ (τ ) is on the form ⟨σ˙0, χ0⟩ Dn˙ ··· Dn˙ ⟨σ˙k, χk⟩,
+
+where σ˙i = inl n˙ (σi) for each i ∈ 0..k. We have to prove that:
+
+
+⟨σ0, χ0⟩ D ··· D ⟨σk, χk⟩	⇐⇒	⟨σ˙0, χ0⟩ Dn˙
+··· Dn˙
+⟨σ˙k, χk⟩
+
+Consider the forward implication first. We proceed by case analysis on the rule used to deduce σiχi D σi+1χi+1. We omit a detailed discussion of the cases Dfail and Dcatch, because they are treated similarly to Dpass and Dreturn , respectively.
+case [call ]:
+l(n)= call n —→ n'
+
+σ : n D σ : n : n'
+Here σi = σ : n, σi+1 = σ : n : n', and χi = χi+1 = false. Let σ' : n =
+
+inl n˙ (σ : n)= σ˙i. If n /= n˙ , then rule Dn˙
+yields:
+
+l(n)= call n —→ n'	n /= n˙ 
+
+σ' : n Dn˙ σ' : n : n'
+To show that σ˙i+i = σ' : n : n' = inl n˙ (σ : n : n')= inl n˙ (σi+1), it suffices to note that rule inl2 instances to:
+inl n˙ (σ : n)= σ' : n	top(σ : n) /= n˙ 
+
+inl n˙ (σ : n : n')= σ' : n : n'
+
+Otherwise, if n = n˙ , then rules Dn˙
+and inl3 give:
+
+l(n˙ )= call
+σ' : n˙ Dn˙
+n˙ —→ n' σ' : n'
+inl n˙ (σ)= σ˙
+
+inl n˙ (σ : n˙ : n')= σ˙ : n'
+
+To prove that σ' = σ˙ , assume first that σ = []. Then, σ' : n˙ = inl n˙ ([n˙ ]) = [n˙ ] implies that σ' = [], and σ˙ = inl n˙ ([]) = [],
+Second, assume σ = σ'' : n''. Condition (2a) of definition 4.4 ensures that
+n'' /= n˙ , because, otherwise, it would be n˙ —→ µ(n˙ ). Then, rule inl2 gives:
+inl n˙ (σ'' : n'')= σ˙	top(σ'' : n'') /= n˙ 
+
+inl n˙ (σ'' : n'' : n˙ )= σ˙ : n˙ 
+By assumption, it is also σ' : n˙ = inl n˙ (σ : n˙ ). Therefore, σ' = σ˙ .
+case [return]:
+l(n')= return n −−· m
+σ : n : n' D σ : m
+
+Let σ' : n' = inl n˙ (σ : n : n'). We have to consider two subcases.
+
+If n˙
+/—→ µ(n'), let σ˙
+: n = inl n˙ (σ : n). Then, lemma A.2 ensures that
+
+n /= n˙ , hence rules inl2 and Dn˙
+inl n˙ (σ : n)= σ˙ : n	top(σ : n) /= n˙ 
+give:
+l(n')= return n −−· m
+
+n˙ /—→ µ(n')
+
+
+
+inl n˙ (σ : n : n')= σ˙ : n : n'
+σ˙ : n : n' Dn˙
+σ˙ : m
+
+Then, σ˙ : m = inl n˙ (σ : m) follows immediately by σ˙ : n = inl n˙ (σ : n).
+Otherwise, if n˙ —→ µ(n'), let σ˙ = inl n˙ (σ). Lemma A.2 and condition (2b)
+
+of definition 4.4 ensure that n = n˙ . Then, rules inl3 and Dn˙
+give:
+
+inl n˙ (σ)= σ˙
+l(n')= return
+n˙ −−· m
+n˙ —→ µ(n')
+
+
+inl n˙ (σ : n˙ : n')= σ˙ : n'
+σ˙ : n' Dn˙
+σ˙ : m
+
+To prove σ˙ : m = inl n˙ (σ : m), observe that, since top(σ) /= n˙ is ensured by condition (2a), then rule inl2 instances to:
+inl n˙ (σ)= σ˙	top(σ) /= n˙ 
+
+inl n˙ (σ : m)= σ˙ : m
+
+
+case [pass]:
+
+l(n)= check(P )	ΓG(σ : n) ▶Perm P	n −−· m σ : n D σ : m
+
+Let σ˙
+: n = inl n˙ (σ : n) and n˙
+—→ n'. By theorem 3.6 and constraint (1e),
+
+there exist nγ ∈ J such that γ = ΓG(σ : n). We must consider two cases. If Dom(n') /∈ γ, then definition A.10 gives Inl n˙ (γ) = γ. Therefore, by lemma A.11:
+ΓG˙ (inl n˙ (σ : n)) = Inl n˙ (ΓG(σ : n)) = Inl n˙ (γ) = γ
+It follows that ΓG˙ (σ˙ : n) ▶Perm P , so the transition is also possible in Dn˙ . Otherwise, if Dom(n') ∈ γ, then, by conditions (2a)–(2c) the state σ
+
+must be on the form σ' : n˙
+: n' : σ'', for some σ', σ'' such that n˙
+/∈ σ''. By
+
+lemma A.2, it follows that ⟨J, Perm⟩ D σ' : n˙ . Consider the trace τ ' = [] D
+··· σ' : n˙ , and let γ˙ = ΓG(σ')∪Dom(n˙ ). Theorem 3.6 states that there exists a path π' ∈ Π(n˙ γ˙ ) in J . By call , n˙ γ˙ —→ n'γ'', where γ'' = (γ˙ † n˙ ) ∪ Dom(n'). Let h be the rightmost index of σ' : n˙ : n' in τ , k be the rightmost index of
+σ : n, and i ∈ h + 1..k. It follows that σi is on the form σ' : n˙ : n' : σ', for
+some σ' /= []. Then, w(τ, h, i)= |σ'| > 0, which, according to definition A.5,
+i	i
+
+means that the trace σ' : n˙ : n' D ··· D σ : n is positive. Therefore, we can apply lemma A.7 to find a path π ∈ Π(n'γ'', nγ). This proves that n˙ γ˙ ⇒ nγ. Since all the premises to condition (2d) in definition 4.4 are satisfied, we can conclude:
+ΓG(σ : n) ▶Perm P ⇐⇒ γ' ∪ Dom(n') ▶Perm P	by def. γ
+⇐⇒ γ' ▶Perm P Λ P ∈ Perm(Dom(n')) by def. 2.4
+⇐⇒ γ' ▶Perm P Λ P ∈ Perm(Dom(n˙ ))	by (2d)
+⇐⇒ γ' ∪ Dom(n˙ ) ▶Perm P	by def. 2.4
+⇐⇒ Inl n˙ (γ) ▶Perm P	by def. A.10
+⇐⇒ ΓG˙ (inl n˙ (σ : n)) ▶Perm P	by lemma A.11
+⇐⇒ ΓG˙ (σ˙ : n) ▶Perm P	by def. σ˙ : n
+Therefore, ΓG˙ (σ˙ : n) ▶Perm P , and the transition σ˙ : n Dn˙ σ˙ : m is possible. Note that σ˙ : m = inl n˙ (σ : m) immediately follows by σ˙ : n = inl n˙ (σ : n).
+case [propagate]:
+
+
+
+If n˙
+
+
+/—→ µ(n'), let σ˙
+n' /−−· 
+
+
+σ : n'  D σ 
+= inl n˙ (σ). Lemma A.2 and condition (2a) ensure
+
+that top(σ) /= n˙ . Then, rules inl2 and Dn˙
+give:
+
+
+
+inl n˙ (σ)= σ˙
+top(σ) /= n˙ 
+n' /−−· 
+n˙ /—→ µ(n')
+
+inl n˙ (σ : n')= σ˙ : n'
+σ˙ : n'  Dn˙
+σ˙ 
+
+Otherwise, if n˙
+—→ µ(n'), then lemma A.2 and condition (2b) imply that
+
+σ = σ' : n˙ for some σ'. Let σ˙ = inl n˙ (σ'). Then, by rules inl3 and Dn˙	:
+
+
+inl n˙ (σ')= σ˙
+n' /−−· 
+n˙ —→ µ(n')
+
+
+
+inl n˙ (σ' : n˙ : n')= σ˙ : n'
+σ˙ : n'  Dn˙
+σ˙ : n˙ 
+
+To prove that σ˙ : n˙ = inl n˙ (σ), observe that, since top(σ') /= n˙ is ensured by condition (2a), then rule inl2 instances to:
+inl n˙ (σ')= σ˙	top(σ') /= n˙ 
+
+inl n˙ (σ' : n˙ )= σ˙ : n˙ 
+For the backward implication, we proceed by case analysis on the rule used to deduce ⟨σ˙i, xi⟩ D ⟨σ˙i+1, xi+1⟩. The function inl is bijective: for each
+inlined state σ˙ , the original state can be recovered by inserting n˙ before each
+
+
+
+n' occurring in σ˙
+σ˙i Dn˙ σ˙i+1 gives:
+case [call1 ]:
+whenever n˙
+—→ µ(n'). A case analysis on the rule used for
+
+l(n)= call n —→ n'	n /= n˙ 
+
+σ' : n Dn˙ σ' : n : n'
+Since inl is bijective, let σ : n be such that inl n˙ (σ : n)= σ' : n. Then:
+
+
+l(n)= call n —→ n' σ : n D σ : n : n'
+inl n˙ (σ : n)= σ' : n	top(σ : n) /= n˙ 
+
+inl n˙ (σ : n : n')= σ' : n : n'
+
+follow by rules Dcall and inl2 , respectively.
+case [call2 ]:
+
+l(n˙ )= call
+σ' : n˙ Dn˙
+n˙ —→ n'
+σ' : n'
+
+Let σ : n˙ be such that inl n˙ (σ : n˙ )= σ' : n˙ . Then:
+
+
+l(n˙ )= call
+n˙ —→ n'
+inl n˙ (σ)= σ'
+
+
+	
+σ : n˙ D σ : n˙ : n'	inl n˙ (σ : n˙ : n')= σ' : n'
+follow by rules Dcall and inl3 , respectively.
+case [return1 ]:
+l(n')= return n −−· m	n˙ /—→ µ(n')
+
+σ˙ : n : n' Dn˙
+σ˙ : m
+
+Since n˙ /—→ µ(n'), by condition (2a) it follows that n /= n˙ . So, let σ : n : n'
+be such that inl n˙ (σ : n : n')= σ˙ : n : n'. Then:
+
+
+l(n')= return n −−· m σ : n : n' D σ : m
+inl n˙ (σ : n)= σ˙ : n	top(σ : n) /= n˙ 
+
+inl n˙ (σ : n : n')= σ˙ : n : n'
+
+follow by rules Dreturn and inl2 , respectively, while σ˙
+: m = inl n˙ (σ : m)
+
+immediately follows by the fact that σ˙ : n = inl n˙ (σ : n).
+case [return2 ]:
+
+
+l(n')= return
+n˙ −−· m
+n˙ —→ µ(n')
+
+σ˙ : n' Dn˙
+σ˙ : m
+
+
+
+Let σ : n' be such that inl n˙ (σ : n')= σ˙
+: n'. Since n˙
+—→ µ(n'), lemma A.2
+
+and condition (2b) give that top(σ)= n˙ , i.e. σ = σ' : n˙ for some σ'. Then:
+
+
+l(n')= return
+n˙ −−· m
+inl n˙ (σ)= σ˙
+
+	
+σ' : n˙ : n' D σ' : m	inl n˙ (σ : n˙ : n')= σ˙ : n'
+
+follow by rules Dreturn and inl3 , respectively, while σ˙ immediately follows by the fact that σ˙ = inl n˙ (σ).
+case [propagate1 ]:
+: m = inl n˙ (σ : m)
+
+n' /−−·	n˙ /—→ µ(n')
+
+σ˙ : n'  Dn˙
+σ˙ 
+
+Let σ : n' be such that inl n˙ (σ : n')= σ˙ : n'.
+
+n' /−−· 
+inl n˙ (σ)= σ˙
+top(σ) /= n˙ 
+
+	
+σ : n'  D σ	inl n˙ (σ : n')= σ˙ : n'
+follow by rules Dpropagate and inl2 , respectively.
+case [propagate2 ]:
+n' /−−·	n˙ —→ µ(n')
+
+σ˙ : n'  Dn˙
+σ˙ : n˙ 
+
+Let σ : n' be such that inl n˙ (σ : n') = σ˙
+: n'.  Since n˙
+—→ µ(n'), by
+
+lemma A.2 and condition (2b) there exists a σ' such that σ = σ' : n˙ . Then:
+
+n' /−−· 
+
+
+σ : n'  D σ 
+inl n˙ (σ')= σ˙
+
+inl n˙ (σ' : n˙ : n')= σ˙ : n'
+
+follow by rules Dpropagate and inl3 , respectively, while σ˙ : n˙ = inl n˙ (σ) imme- diately follows by the fact that inl n˙ (σ')= σ˙ .

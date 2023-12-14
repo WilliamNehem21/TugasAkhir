@@ -1,0 +1,590 @@
+Electronic Notes in Theoretical Computer Science 175 (2007) 19–37	
+www.elsevier.com/locate/entcs
+
+Symbolic Model Checking for Channel-based Component Connectors
+Sascha Klüppelholz, Christel Baier
+Technische Universität Dresden, Institut für theoretische Informatik, Germany
+{klueppel,baier}@tcs.inf.tu-dresden.de
+
+Abstract
+The paper reports on the foundations and experimental results with a model checker for component con- nectors modelled by networks of channels in the calculus Reo. The specification formalisms is a branching time logic that allows to reason about the coordination principles of and the data flow in the network. The underlying model checking algorithm relies on variants of standard automata-based approaches and model checking for CTL-like logics. The implementation uses a symbolic representation of the network and the enabled I/O-operations by means of binary decision diagrams. It has been applied to a couple examples that illustrate the eﬃciency of our model checker.
+Keywords: constraint automata, model checking, branching time logic, data streams, binary decision diagrams
+
+
+Introduction
+In the past 15 years, many languages and models for coordination have been de- veloped that provide a formal description of the glue code for plugging components together and can also serve as a starting point for formal verification. In this paper, we address the latter aspect for the exogenous coordination language Reo [2]. In Reo, the glue code is provided by a network of channels obtained through a series of operations that create channel instances and link them together in (network) nodes. The semantics of Reo networks has been provided in different, but consistent ways.
+[2] formalizes the enabledness and effect of I/O-operations at the network configura- tions by means of accept and offer predicates that declare whether and which data items can be written or read at a node. An operational semantics that specifies the stepwise behavior of and possible data flow in a Reo network has been presented in [6] using a variant of labelled transition systems, called constraint automata, and shown to be consistent with the timed data stream semantics of [5].
+
+1 The authors are supported by the DFG-NWO-projects SYANCO and VOSS II.
+
+1571-0661 © 2007 Elsevier B.V. Open access under CC BY-NC-ND license.
+doi:10.1016/j.entcs.2007.03.003
+
+Although Reo is an elegant formalism to synthesize component connectors with simple composition operators, Reo networks with many channels tend to be hard to understand. Thus, tool support for analyzing the coordination mechanism specified by a Reo network is a crucial aspect for applying the Reo framework for complex scenarios. Algorithms for verifying Reo networks on the basis of their constraint automata semantics have been presented in [6] for checking (bi)simulation and lan- guage equivalence and in [3,10] for temporal logic specifications. We follow here the latter approach and deal with a branching time, time-abstract variant of timed data stream logic (TDSL) introduced in [3] for reasoning about real-time constraints of Reo networks in the linear time setting. Ignoring some minor differences, our logic, called branching time stream logic (BTSL), is contained in the logic considered in [10], where the main focus is on the treatment of dynamic reconfiguration rather than model checking. BTSL combines the standard CTL-operators [11,12] with a special path modality ⟨α⟩ and its dual [α] that allow to reason about the data streams observable at the network nodes by means of a regular expression α. For instance, assume C is a component which is linked to a Reo network by an output port Request where C sends off the request to get access to certain resources and an input port Grant where C might receive the grant. Then, the BTSL formula
+∃[true∗ ; Request ; (¬Grant)∗] ∀⟨true∗ ; Grant⟩ resources_available
+states the possibility that each request of C will eventually be granted and the required resources will be available for C.
+The purpose of this paper is to report on an implementation of a BTSL model checker. The input is a Reo network and a BTSL formula Φ which has to be checked for the network. The BTSL model checking procedure relies on a combination of known methods for model checking CTL-like logics and automata-based approaches for linear time logics. A rough sketch for model checking a BTSL-like logic has been given in [10], which follows the standard CTL∗ model checking approach [14,12] and uses a reduction to the TDSL model checking problem. However, no details or explanations on an efficient implementation have been provided in [10]. In fact, for BTSL the reduction to the model checking problem for the real-time logic TDSL is unnecessary, since simpler techniques sufficies. As we will show in this paper, for the treatment of the modalities ⟨α⟩ and [α] even a reduction to ordinary CTL is possible. Furthermore, we depart from former approaches with constraint automata by dealing with infinite and finite runs. The latter are crucial for the treatment of deadlock configurations that might appear in Reo networks.
+Our model checker deals with a symbolic approach where the constraint automa- ton for a Reo network is represented by a binary decision diagram (BDD). The first step is the generation of a BDD-representation of the contraint automaton for the network. This is done in a compositional manner by mimicking Reo’s operators to synthesize the network by adding channels and joining nodes by means of corre- sponding operators on BDDs. The second step is then to perform the BTSL model checking using appropriate operations for manipulating BDDs. For this, we apply state-of-the-art techniques for symbolic CTL model checking in combination with a
+
+symbolic treatment of the ⟨α⟩- and [α]-modality.
+Organisation of the paper. Section 2 gives a brief introduction in the coor- dination language Reo and constraint automata that serve as operational model for Reo networks. In Section 3, we explain the syntax and semantics of the logic BTSL. Section 4 summarizes the main steps of the BTSL model checking algorithm and reports on our symbolic implementation. Experimental results will be presented in Section 5. Section 6 concludes the paper.
+
+Reo and constraint automata
+In this section we summarize the main concepts of the coordination language Reo and its operational constraint automata semantics. Further details can be found in [2,6]. Reo is an exogeneous coordination language which is based on a channel-based calculus where complex component connectors are organized in a network of channels and built in a compositional manner. Reo networks provide the glue code for the coordination and interactions of the components that are connected to the network. Reo relies on a very liberal notion of channels and supports any kind of peer-to-peer communication. The requirement for the channels used in a Reo network are that channels must have two channel ends, declared to be sink or source ends, and a user-defined semantics. At source ends data items enter the channel (by performing corresponding write operations), while data items are received from a channel at the sink ends (by performing corresponding read operations).
+
+		
+
+synchronous
+FIFO1
+synchronous
+
+channel	channel	drain
+The figure above shows the graphical representation of three simple channel types that will be used in our examples. Synchronous and FIFO channels have a source and a sink end. In synchronous channels the write and read operations have to be performed simultaneously. The picture in the middle shows a FIFO channel with one buffer cell, briefly called FIFO1 channel, where the buffer is initially empty. Writing a data item at the source end is enabled as long as the buffer is empty. The effect of writing d is that d will be stored in the buffer. Reading at the sink end is enabled if the buffer is filled, in which case the data item is taken off from the buffer. A very useful channel for the design of complex coordination principles in Reo is the synchronous drain. It has two source ends (but no sink end). A data item has to be written on both ends simultaneously and both are being destroyed.
+The nodes of a Reo network represent sets of channel ends. They arise through Reo’s join operator and can be classified into source, sink and mixed nodes, depend- ing on whether all channel ends that coincide on a node A are source ends (then A is a source node), sink ends (then A is a sink node), or whether A combines sink and source ends (then A is a mixed node). Source and sink nodes represent input and output ports where components might connect to the network. The mixed nodes
+
+serve as routers where data items can be transmitted through the network.
+Concurrent I/O-operations. For simplicity of the paper, we assume here a fixed finite and nonempty set Data of data items that can be written or taken from the channels. If U is a set of network nodes then the observable data flow at some moment can be described by a concurrent I/O-operation. This means a pair (N, δ) where N is a nonempty node-set (i.e., ∅ /= N ⊆ U) and δ : N → Data. The intuitive meaning of a concurrent I/O-operation (N, δ) is that the nodes A ∈ N synchronize their I/O-operations such that δ(A) is the data item observed at node A. More precisely, each source node A ∈ N writes data item δ(A) at all channels with a source end on A, while each sink node A ∈ N takes data item δ(A) from one of the channels with a sink end on A. The mixed nodes A ∈ N read δ(A) from one of the channels with a sink end on A and simultaneously writes δ(A) at all channels with a source end on A. In the moment where the concurrent I/O-operation (N, δ) is performed there is no data flow at the other nodes B ∈U \ N .
+Constraint automata have been introduced to provide a compositional, opera- tional semantics for Reo networks [6]. The states of the automaton for a Reo network represent the configurations (e.g., contents of the buffers for FIFO channels), while the transitions model the enabled concurrent I/O-operations. In [6] the transitions
+N,dc
+have the form q ————→ p where q and p are the starting and target states, respec-
+tively, N is the set of nodes where I/O-operations are performed simultaneously and dc is a data constraint, i.e., a boolean condition on the data items written or read at the nodes A ∈ N . According to our BDD-based implementation (see Section 4), we go one step further towards a symbolic representation and deal with transitions
+g
+q —→ p where g is an I/O-constraint, i.e., a condition on both, the nodes where I/O-
+operations will be performed and the data items. Furthermore we depart from [6] by dropping the requirement that all runs have to be infinite. We also deal with finite runs, which are necessary to argue about deadlock configurations.
+I/O-constraints. We use a symbolic representation of sets of concurrent I/O- operations by means of boolean conditions on the nodes A ∈U and the data items dA written or read at node A. Formally, an I/O-constraint for U is a proposi- tional formula built by the literals A (where A ∈ U) and the atomic formulas “(dA1 ,... , dAk ) ∈ R” where k ≥ 1, A1,... , Ak are pairwise distinct nodes and R ⊆ Datak. Throughout the paper, we will use intuitive notations like “ dA = 0” for “ dA ∈ {0}” or “ dA /= dB” for “(dA, dB) ∈ {(δA, δB) ∈ Data2 | δA /= δB}”, and write IOC for the set of all I/O-constraints. I/O-constraints are interpreted over concurrent I/O-operations (N, δ) in the expected way, i.e., (N, δ) |= A iff A ∈ N and (N, δ) |= (dA1 ,... , dAk ) ∈ R iff {A1,... , Ak} ⊆ N Λ (δ(A1),... , δ(Ak)) ∈ R.
+The propositional logic operators have their standard semantics. We write [| g |]N
+for the set of concurrent I/O-operations (N, δ) where ∅ /= N ⊆ U and (N, δ) |= g. Note that the semantics of I/O-constraints depends on the underlying node-set U. For example, [| dA = dB |]N = {(N, δ) | {A, B} ⊆ N ⊆ U , δ(A) = δ(B)} and
+[| true |]N = {(N, δ) | ∅ /= N ⊆ U ,δ : N → Data}. Two I/O-constraints g1 and g2
+are U -equivalent, denoted g1 ≡N g2, iff [| g1 |]N = [| g2 |]N . If the node-set is clear from the context we simply write [| g |] and ≡ and speak about satisfiability and
+
+equivalence of I/O-constraints.
+Definition 2.1 A constraint automaton (CA) is a tuple A	=	(Q, U , —→
+, Q0, AP, L), where Q is a set of states, U a set of nodes, disjointly partioned into
+
+U = U
+src
+snk
+mix
+, Q0 ⊆ Q the set of initial states, —→⊆ Q × IOC × Q
+
+the transition relation, AP a finite set of atomic propositions, and L : Q → 2AP a labeling function. The nodes in U src (U snk, U mix) are called source nodes (sink nodes and mixed nodes, respectively). The instances of a transition (q, g, p) are tuples (q, N, δ, p) where (N, δ) ∈ [| g |]N . Throughout the paper, we only consider finite constraint automata, i.e., we require that U, Q and —→ are finite.
+ 
+g	N,δ
+In the sequel, we use arrow-notations q —→ p for a transition (q, g, p) and q ———→
+p for its instances. Fig. 1 illustrates the constraint automata for a synchronous channel with source node A and sink node B, a FIFO1 channel with source node A and sink node B and the data domain Data = {0, 1} and a synchronous drain with source nodes A and B. In all three cases the node set is U = {A, B}. The I/O- constraint “ dA = dB” in the automaton for the synchronous channel indicates the concurrent I/O-operations ({A, B}, δ) where δ(A)= δ(B), while the I/O-constraint A Λ B in the automaton for the synchronous drain represents all concurrent I/O-
+operations of the form ({A, B}, δ). For the FIFO channel one might use the atomic propositions empty and full with the obvious labeling function.
+
+
+dA = dB
+
+synchronous channel
+
+
+
+
+
+FIFO1
+channel
+dA = 0 Λ ¬B
+
+
+
+q
+q(0)
+dB = 0 Λ ¬A dA = 1 Λ ¬B
+
+A Λ B
+
+
+synchronous drain
+
+dB = 1 Λ ¬A
+q(1)
+
+
+Fig. 1. CA for a synchronous channel, FIFO1 channel and synchronous drain
+For state q, the I/O-constraints ioc(q, p)=  {g | q g  p} represents the weakest
+condition on the I/O-operations at the nodes that have to be synchronized for moving within one step from q to p. Thus, if P ⊆ Q then ioc(q, P )=  p∈P ioc(q, p) stands for the set of all concurrent I/O-operations that are enabled in q and lead to a con- figuration in P . With P = Q, we get a boolean characterization ioc(q)= ioc(q, Q) for the set of all enabled concurrent I/O-operations in q.
+State q is called terminal if ioc(q) Λ A∈N s ¬A ≡ false where U s = U src ∪U snk. This condition means that in all enabled concurrent I/O-operations in q at least one
+of the sink or source nodes is involved. These I/O-operations might be refused if the components that connect to these nodes are not willing to provide the corresponding write or read operations. Thus, data flow might stop in terminal states.
+The intuitive operational behavior of a constraint automaton can be formalized by its runs. Runs in a constraint automaton are defined as finite or infinite sequences
+
+of consecutive transition instances. In the case of finite runs, we allow that they end with a special pseudo-transition with the label √, denoting the end of data flow,
+provided that the last state is terminal. I.e., finite runs have the form
+
+N1,δ1
+Nk,δk
+N1,δ1
+Nk,δk	√
+
+(1) q0 —————→ ... —————→ qk	or	(2) q0 —————→ ... —————→ qk ——→ qk
+Ni,δi
+where qi−1 ————→ qi are transition instances (i = 1,... , k) and qk is terminal for
+finite runs ending with a	-transition (case (2)). The length |θ| ∈ IN ∪ {ω} is defined as the number of transition instances taken in θ (possibly including the
+pseudo-transition with label √). A maximal run means an infinite run or a finite
+run that ends with a pseudo-transition labelled by √. We write Runs(q) for the set
+of all runs starting in q and MaxRuns(q) for all maximal runs starting in q.
+
+If θ = q0
+N1,δ1
+—————→ q1
+N2,δ2
+—————→ q2
+N3,δ3
+—————→ ... is an infinite or finite, but non-
+
+maximal run then the word (N1, δ1) (N2, δ2) (N3, δ3) ... obtained by taking the pro-
+jection to the sequence of concurrent I/O-operations is called the I/O-stream of θ.
+
+N1,δ1
+Nk,δk	√
+
+For finite maximal runs, say θ = q0√—————→ ... —————→ qk ——→ qk, the I/O-stream
+of θ is the word (N1, δk) ... (Nk, δk)	.
+
+Branching Time Stream Logic
+In this section we introduce a branching time temporal logic for reasoning about the control and data flow of a constraint automata. The logic, called Branching Time Stream Logic (BTSL), combines features of CTL [11,12], PDL [15] and timed data stream logic (TDSL) [3,9,4]. As in CTL, formulas may refer to the configurations of a component connector (states of a constraint automata) by means of atomic propositions ap ∈ AP and may use the path quantifiers ∃ and ∀. Path properties are specified by the standard until operator or the PDL/TSDL-like modality ⟨α⟩ where α is a regular expression specifying sequences of I/O-operations at the nodes.
+Branching Time Stream Logic (BTSL).  A BTSL signature is a tuple (AP, U) consisting of a finite nonempty set AP of atomic propositions and a fi- nite nonempty node-set U. The syntax of BTSL has three levels: state formulas (denoted by capitol greek letters Φ, Ψ), run formulas (denoted by the small greek let- ter ϕ), and regular I/O-stream expressions (denoted by the letter α). The abstract syntax of BTSL is given by the following grammar where ap ∈ AP and g ∈ IOC:
+Φ := true ap  Φ1 Λ Φ2  ¬Φ  ∃ϕ  ∀ϕ ϕ := Φ  Φ  α Φ
+α := g  stop  α∗  ¬α  α1 ; α2  α1 ∪ α2  α1 ∩ α2
+The intuitive meaning of the state formulas and the until operator U is as in CTL. In the PDL-like formula ⟨α⟩Φ, the regular I/O-stream expression α specifies a set
+of finite I/O streams, i.e., finite sequences of concurrent I/O-operations, possibly ending with the symbol √. Intuitively, ⟨α⟩Φ holds for a maximal run if it starts
+with a finite prefix where the data flow matches the conditions specified by α.
+Other operators can be derived, e.g.,  Φ = true U Φ (eventually), ∀ Φ =
+
+¬∃ ¬Φ and ∃ Φ = ¬∀ ¬Φ (always). The dual to the PDL-like modality ⟨·⟩ is obtained by ∃[α]Φ = ¬∀⟨α⟩¬Φ and ∀[α]Φ = ¬∃⟨α⟩¬Φ. Intuitively, [α]Φ holds for a maximal run if all its finite prefixes θ, where the induced I/O-stream belongs to the language given by α, end in a state where Φ holds. The next step operator ◯ of
+LTL/CTL-like logics arises as a special instance of ⟨·⟩ by ◯Φ= ⟨true⟩Φ.
+The semantics of a regular data expression α is provided by means of a language LN (α) ⊆ 2IOS where IOS denotes the set of all finite I/O-streams, i.e., finite se- quences of concurrent I/O-operations, possibly ending with the special symbol denoting that there is no further data flow. We define LN (g) to be the set of all concurrent I/O-operations (N, δ), viewed as words (I/O-streams) of length 1, such
+that (N, δ) ∈ [|g |]N . The language LN (stop) is the singleton set {√}. The operators
+∪, ∩ and ¬ in the grammar for regular I/O-stream expressions have the standard
+meaning, i.e., ∩ stands for intersection, ∪ for union, and ¬ for complementation. (Complementation and intersection could be dropped in the syntax of regular I/O- streams expressions without decreasing the expressivity of the logic. We included them in our syntax since there are no closed regular expressions for ¬α or α1 ∩ α2.) The meaning of ; and  agrees with standard concatenation and Kleene closure,
+except for a special treatment of √. If L1, L2 ⊆ 2IOS then L1 ; L2 arises by the
+pointwise concatenation σ1 ; σ2 of the elements in σ1 ∈ L1 and the elements σ2 ∈ L2 where σ1 ; σ2 = σ1 if σ1 ends with . The Kleene closure is then defined in the standard way by L∗ = Ln where L0 = ε (the language consisting of the empty I/O-stream), L1 = L and Ln+1 = L ; Ln.
+BTSL formulas over the signature (AP, U) are interpreted over a constraint automaton with the node-set U and the set AP of atomic propositions. For A = (Q, U , —→, Q0, AP, L), the satisfaction relation |=A for BTSL state formulas is defined in the standard way:
+q |=A true
+q |=A ap   ⇐⇒ ap ∈ L(q)
+q |=A ¬Φ   ⇐⇒ q |=A Φ
+q |=A Φ1 Λ Φ2 ⇐⇒ q |=A Φ1 and q |=A Φ2
+q |=A ∃ϕ	⇐⇒ there exists a run θ ∈ MaxRuns(q) s.t. θ |=A ϕ q |=A ∀ϕ	⇐⇒ for all runs θ ∈ MaxRuns(q): θ |=A ϕ
+The meaning of the path formulas is as follows. If θ is a maximal run then θ |=A ⟨α⟩Φ iff there exists a finite prefix θ' of θ such that p |=A Φ for the last state p of θ' and the I/O-stream of θ' belongs to LN (α). The semantics of the until operator is as in CTL. If θ is a maximal run in A then the satisfaction relation θ |=A (·) for BTSL run formulas is defined as follows.
+
+N1,δ1
+N2,δ2
+N3,δ3
+
+If θ = q0 —————→ q1 —————→ q2 —————→ ... is infinite then
+θ |=A ⟨α⟩Φ ⇐⇒ ∃j ≥ 0 s.t. qj |=A Φ and (N1, δ1) ... (Nj, δj) ∈ LN (α)
+
+N1,δ1
+Nk,δk	√
+
+If θ = q0 —————→ ... —————→ qk ——→ qk is finite then
+θ |=A ⟨α⟩Φ ⇐⇒ either ∃0 ≤ j ≤ k s.t. qj |=A Φ and (N1, δ1) ... (Nj, δj ) ∈ LN (α)
+or qk |=A Φ and (N1, δ1) ... (Nk, δk) √ ∈ LN (α)
+For θ to be an infinite or finite maximal run with the state sequence q0 q1 q2 .. .:
+θ |=A Φ1 U Φ2 ⇐⇒ ∃0 ≤ j < |θ| s.t. qj |=A Φ2 Λ ∀0 ≤ i < j. qi |=A Φ2
+ Let SatA(Φ) = {q ∈ Q | q |=A Φ}. If A is clear from the context then we skip the subscript A and simply write |= and Sat(·). Automaton A fulfills Φ, denoted
+A |= Φ, if q0 |=A Φ for all initial states q0 ∈ Q0.
+Example 3.1 For a synchronous channel with source node A and sink node B the BTSL formula ∀ ∀⟨stop ∪ (dA = dB)⟩true holds, asserting that all runs in the automaton consist of concurrent I/O-operations where data items are transmitted
+synchronously from A to B, and possibly end if the components connected to A or B do not provide the corresponding write or read operation. For the FIFO1 channel with source node A and sink node B, the formulas ∀[true∗ ; A]full and
+∀[true∗ ; B]empty hold, stating that after A’s write operation the buffer is full, while
+after B’s read operation the buffer is empty. Also the formula ∀ ¬∃⟨A Λ B⟩true
+holds for the FIFO1 channel stating the impossibility of simultaneous data flow at
+A and B. For (the constraint automata of) the network on the left of Fig. 2, the
+BTSL formulas ∀ ¬∃⟨A Λ B⟩true, ∀[true∗ ; A]∀⟨B⟩true, ∀[true∗ ; B]∀⟨A⟩true and
+∀⟨true∗⟩∀⟨dA = d ∪ dB = d⟩true hold. (The d in the picture denotes that the upper buffer is filled with the data item d in the initial configuration.) The former three
+formulas state that data flow at A and B alternates, while the latter formula asserts that only data item d, observed at A or B, is possible.
+
+A	A
+
+
+B	B	C
+
+Fig. 2. Two Reo networks
+
+While the network on the left has no terminal states, and thus, data flow is always infinite, the source node C in the network on the right may write into the upper buffer which yields the configuration where both buffers are filled and data flow
+stops. Hence, the network on the right fulfills the formulas ∀[true∗ ; A]∀⟨(B ; A) ∪
+(C ; stop)⟩true, ∀[true∗ ; B]∀⟨A⟩true and ∀[true∗ ; C]both_buffers_full, where both
+_buffers_full is an atomic proposition with the obvious semantics.
+Fig. 3 shows the network for a sequencer, built out of 4 FIFO1 channels and several synchronous channels and drains that allows the Ai’s to send messages to
+
+
+A3 A2 A1 A0
+
+
+
+
+
+
+
+
+Fig. 3. A sequencer
+B in the order A0 A1 A2 A3 A0 A1 A2 A3 .. .. This property can be formalized by the formulas чЕ⟨(true∗ ; Ai ; Aj)⟩true where 0 ≤ i < j and j /= i + 1 (modulo 3). Other properties that hold for the sequencer are 6[true∗ ; (чstop ∩ чB)]false,
+6[true∗ ; Ai]filled(i+1) and 6  filled(i+1) → Е⟨dAi = dB⟩true  where filled(i+1) is
+an atomic proposition stating that the (i + 1)-st buffer is filled (modulo 3).
+The terminal states of a constraint automaton are characterized by the formula
+Φterminal = Е⟨stop⟩true.
+
+Symbolic BTSL Model Checking
+The BTSL model checking problem takes as input a Reo network, possibly together with constraint automata that specify the interfaces of the components that are connected to the source and sink nodes of the network, and a BTSL formula which has to be checked for the network. The automata for the components that are con- nected to the sink or source nodes of the network describe the environment in which the network operates. They may restrict the nondeterminism in the automaton for the network, since certain transition instances (concurrent I/O-operations) might become impossible due to the behavioral interfaces of the components. After con- necting a sink and source node A of the network with a port of a component, A is treated as a mixed node. Thus, the automata for the component might also decrease the set of terminal states. In case nothing is known about the potential behaviors of the components that will be coordinated by the network, these automata can be skipped, in which case all possible interactions of the sink and source nodes will be taken into account for the analysis.
+
+
+Fig. 4. Model Checking schema
+The schema of our model checker is depicted in Fig. 4. The first step is to gener- ate an appropriate representation of the constraint automaton associated with the
+
+network, possibly within the environment given by the automata for the compo- nents. The goal of the second step is to verify or falsify whether for the generated constraint automata a given BTSL formula holds in all initial states. For certain formula types the model checker can return a witness (e.g., a run θ with θ |= ϕ if the formula to be checked is Eϕ) or a counterexample (e.g., a run θ with θ |= ϕ if the formula to be checked is 6ϕ).
+In the remainder of this section, we report on a symbolic BTSL model checker. We first summarize the main steps of the BTSL model checking algorithm and then explain its symbolic realization.
+The model checking algorithm. BTSL model checking relies on a combi- nation of the CTL model checking algorithm [11] with automata-based approaches. Given a constraint automata A and BTSL state formula Φ, the idea is an iterative computation of the satisfaction sets SatA(Ψ) for the sub-state-formulas Ψ of Φ.
+The treatment of the propositional logic fragment is obvious. The satisfaction sets for formulas E(Φ1 U Φ2) or 6(Φ1 U Φ2) are obtained as in CTL, only slight modifications are necessary for a correct treatment of terminal states. For formulas of the form E⟨α⟩Ψ or E[α]Ψ, 2 we first apply standard algorithms to generate a nondeterministic finite automata (NFA)  for the regular I/O-stream expression α.
+The alphabet of Z, i.e., the range of the transition labels in A, is IOC ∪ {√}. In
+fact, beside the special √-transitions, Z can be viewed as a constraint automata
+Z = (Z, U , —→, Z0, ZF ) with an additional set ZF of final (accept) states. The
+atomic propositions and labeling function are irrelevant for . By the special role of the end symbol √, we may assume that Z’s state space Z contains a subset Z√
+such that
+
+√
+z
+z' implies z' ∈ Z√,
+
+——→
+z  g  z'
+
+∈ Z√
+implies g = √
+
+and
+
+the states in Z√ do not have successors.
+Given A and Z, we then built the product A× Z where the states are pairs (q, z) consisting of a state q in A and a state z in Z. The transitions in A×Z are obtained by the following rules:
+
+
+g1
+q ——→A
+
+q' Λ
+
+g2
+z ——→Z z
+
+Λ g1, g2 ∈ IOC
+√
+q is terminal in A Λ z ——→Z z'
+
+(q, z)	g1∧g2
+(q', z')	√	'
+
+—————→A×Z
+(q, z) ——→A×Z (q, z )
+
+where we use the subscripts A, Z or A×Z for the transition relations in A, Z and A× Z, respectively. The product A× Z is equipped with two atomic propositions sat(Ψ) and final and the labeling function that assigns sat(Ψ) to all states (q, z)
+where q |=A Ψ and final to all states (q, z) where z ∈ ZF . The following proposition
+provides a reduction to CTL.
+Proposition 4.1 (Reduction to CTL)
+
+2 We explain here an algorithm for ∃[α]Ψ. The treatment of formulas ∀⟨α⟩Ψ is obtained by the duality law
+∀⟨α⟩Ψ ≡ ¬∃[α]¬Ψ.
+
+q |=A E⟨α⟩Ψ iﬀ there exists z0 ∈ Z0 with (q, z0) |=A×Z E (sat(Ψ) Λ final)
+If A is deterministic then q |=A E[α]Ψ iﬀ (q, z0) |=A×Z E (sat(Ψ) ∨ чfinal)
+where z0 is the initial state of Z.
+Part (a) of Prop. 4.1 allows to compute Sat(E⟨α⟩Ψ) by means of a backward reachability analysis in A×Z. For Sat(E[α]Ψ), the second part of Prop. 4.1 suggests to switch from Z to an equivalent deterministic finite automata (DFA) and to search for cycles in a subgraph of the product of A and the DFA.
+Proof. To simplify the notations, we treat the pseudo-symbol √ as a concurrent I/O-operation and use the notations (N, δ) for the concurrent I/O-operations and
+the special symbol √. I.e., we identify with (∅, √) and assume that (N, δ) ranges
+over the elements of {(N, δ) | ∅ /= N ⊆ U ,δ : N → Data}∪ {(∅, √)}.
+N1,δ1	Nk,δk
+: If q |=A E⟨α⟩Φ then there exists a run q = q0 —————→ ... —————→ qk in A
+such that
+
+
+
+N1,δ1
+(N1, δ1) ... (Nk, δk) ∈ LN (α) and qk |=A Ψ.
+Nk,δk
+
+Let z0 —————→ ... —————→ zk be an accepting run in Z for (N1, δ1) ... (Nk, δk) , i.e.,
+zk ∈ ZF and z0 ∈ Z0. Then,
+
+N1,δ1	Nk,δk
+(q0, z0) —————→ ... —————→ (qk, zk)
+is a run in A× Z. Hence, (q, z0) |=A×Z E (sat(Ψ) Λ final).
+Let us now assume that (q, z0) |=A×Z E (sat(Ψ) Λ final) where z0 ∈ Z0. Then, there exists a run
+N1,δ1	Nk,δk
+(q0, z0) —————→ ... —————→ (qk, zk)
+in A×Z with q = q0 and (qk, zk) |=A×Z sat(Ψ) Λ final, i.e., qk |=A Ψ and zk ∈ ZF . Thus,
+N1,δ1	Nk,δk
+z0 —————→ ... —————→ zk
+is an accepting run for (N1, δ1) ... (Nk, δk) in A. This yields (N1, δ1) ... (Nk, δk) ∈
+LN (α). Since qk |=A Ψ,
+
+N1,δ1	Nk,δk
+q = q0 —————→ ... —————→ qk
+is a run in A where ⟨α⟩Ψ holds.
+: Let A be deterministic and z0 the initial state of Z. If q |=A E[α]Φ then there exists a maximal run θ of the form
+
+
+N1,δ1
+Nk,δ2
+N3,δ3
+
+q = q0 —————→ q1 —————→ q2 —————→ ... 
+N1,δ1	Nk,δk
+such that θ |= [α]Ψ. Let us consider a prefix q = q0 —————→ ... —————→ qk of θ and
+let
+N1,δ1	Nk,δk
+z0 —————→ ... —————→ zk
+
+be the unique run for (N1, δ1) ... (Nk, δk) in A. Then, zk ∈ ZF implies qk |=A Ψ. Thus, θ can be lifted to a maximal run in A×Z where  (sat(Ψ) ∨ чfinal) holds. This yields (q, z0) |=A×Z E (sat(Ψ) ∨ чfinal).
+Let us now assume that (q, z0) |=A×Z E (sat(Ψ) ∨ чfinal) and let
+
+θ' = (q ,z )	N1 ,δ1
+N2,δ2
+(q ,z )
+... 
+
+0 0 —————→	1 1 —————→
+be a maximal run in A×Z where q = q0 and θ' |=A×Z (sat(Ψ) ∨ чfinal). The projection of θ' to the A-components yields a maximal run θ in A starting in q. We now show that θ |=A [α]Ψ. Let
+
+N1,δ1	Nk,δk
+q = q0 —————→ ... —————→ qk
+
+
+be a prefix of θ.	Then, z0
+N1,δ1
+—————→ ... 
+Nk,δk
+—————→ zk is the (unique) run for
+
+(N1, δ1) ... (Nk, δk) in Z. Since θ' |=  (sat(Ψ) ∨ чfinal), we have: zk ∈ ZF im-
+plies qk |=A Ψ. This yields the claim.	 
+However, the determinization of Z (which can cause an exponential blow-up) can be avoided by applying Algorithm 1.
+
+Algorithm 1 Computation of Sat(E[α]Ψ)	
+construct an NFA Z for α and built the product A× Z;
+V := {(q, z) ∈ Q × Z | q ∈ Sat(Ψ) ∨ z ∈/ ZF };
+repeat
+V ' := V ;
+
+N,δ
+R := {(q, z) | 6 transition instances q
+q' Ez	N,δ
+z' s.t. (q', z') ∈/ V };
+
+V := (V \ R) ∪ {(q, z) ∈ V | q
+until (V  = V );
+———→A
+terminal Λ z ∈
+Z√} ———→Z
+
+  return {q ∈ Q | (q, z0) ∈ V for all z0 ∈ Z0}	
+
+Proposition 4.2 Algorithm 1 computes the set of states q ∈ Q where q |=A E[α]Ψ.
+
+Proof. Let V be the set of states (q, z) that belong to V when the repeat-loop terminates. Furthermore, let V0 = {(q, z) | q ∈ Sat(Ψ) ∨ z ∈/ ZF }, W0 = Q × Z \ V0 and let Wi be the set of states that are removed from V in the i-th iteration. Then,
+
+V =  i≥0 Vi = Vn
+where Vi+1 = Vi \ Wi+1 and n is the number of iterations.
+
+Moreover, we have:
+for all (q, z) ∈ V where q is non-terminal there exists a transition instance
+
+N,δ
+q ———→
+
+
+q' such that (q', z') ∈ V for all z	N,δ
+N1,δ1
+z'.
+
+Nk,δk
+
+for all (q, z) ∈ Wi and for all runs q = q0 —————→ ... —————→ qm of length m ≥ i
+N1,δ1	Nk,δk
+in A there exists a run z = z0 —————→ ... —————→ zk of length k ≤ min{i, m}
+such that (qk, zk) ∈/ V0, i.e., qk |=A Ψ and zk ∈ ZF .
+Let us now assume that q0 is a state contained in the set returned by Algorithm 1. Then, (q0, z0) ∈ V for all initial states z0 in Z. We successively apply (i) to obtain
+
+a maximal run in A
+
+N1,δ1
+N2,δ2
+
+such that for all runs
+θ = q0 —————→ q1 —————→ ... 
+
+N1,δ1	N2,δ2
+z0 —————→ z1 —————→ ... 
+
+in Z for the same I/O-stream, we have (qi, zi) ∈ V for all indices i. Since V ⊆ V0
+we obtain θ |=A [α]Ψ, and thus, q0 |=A E[α]Ψ.
+We now consider a state q0 ∈ Q such that q0 |=A E[α]Ψ. Let
+
+N1,δ1	N2,δ2
+θ = q0 —————→ q1 —————→ ... 
+be a maximal run in A such that θ |=A [α]Ψ. W.l.o.g. θ has minimal length under all runs θ' ∈ MaxRuns(q0) where θ' |=A E[α]Ψ. If we assume that (q0, z0) ∈/ V for some z0 ∈ Z0, say (q0, z0) ∈ Wi, then |θ|≥ i and by (ii) there exists k ≤ i and a run
+
+N1,δ1	Nk,δk
+z0 —————→ ... —————→ zk
+in Z such that (qk, zk) ∈/ V0.	Hence, zk ∈ ZF and qk |=A Ψ.	But then
+(N1, δ1) ... (Nk, δk) ∈ LN (α) and θ |=A [α]Ψ. Contradiction. This yields (q0, z0) ∈
+V for all z0 ∈ Z0. Hence, q0 is in the set of states returned by Algorithm 1.	 
+The complexity of the algorithms to compute the satisfaction sets of E⟨α⟩Ψ and 6[α]Ψ are polynomial in the size of A and Z. Thus, the overall time complexity of BTSL model checking is polynomial in the size of A and the length of the input formula Φ, provided the regular I/O-stream expressions in Φ are ordinary regular expressions, i.e., do not use the complementation or intersection operator, since they can cause an exponential blow-up in the construction of Z from α.
+Symbolic implementation. We now summarize the main features of our symbolic BTSL model checker with binary decision diagrams (BDDs), see e.g. [8,17,16,19].  BDDs are a data structure for switching functions f : Eval(x1,... , xn) → {0, 1} where x1,... , xn are boolean variables and Eval(x1,... , xn) denotes the set of evaluations for x1,... , xn. To represent a con- straint automaton A = (Q, U , —→, Q0, AP, L) by a BDD, we fix a binary encoding of the states, i.e., we embed Q into {0, 1}n by an injective function bin : Q → {0, 1}n
+where n = [log |Q||, choose boolean state variables q1,... , qn and then identify each state q with the evaluation for q1,... , qn given by bin(q). In the same way, we may
+
+encode the data items by bit tuples. For simplicity, we assume here the boolean data domain Data = {0, 1} and treat the symbols dA and the nodes A ∈ U as boolean variables.
+In the sequel, let U = {A1,... , Ak} and di = dAi , i = 1,... , k. We write
+A and d for the variable tuples (A1,... , Ak) and (d1,... , dk), respectively. The transition relation —→ can be identified with its characteristic function and viewed as a switching function TA : Eval(q¯, A¯, d¯, q¯') → {0, 1}, where the variable tuple
+q¯ = (q1,... , qn) encodes the starting state, q¯' = (q'1,... , q'n) the target state, while A¯
+and d¯ serve to represent the concurrent I/O-operations. For instance, the transition
+relations of the constraint automata for a synchronous channel with source node A
+and sink node B and a synchronous drain are given by:
+Tsync_channel(q1, A, B, dA, dB, q'1) = q1 Λ A Λ B Λ (dA ↔ dB) Λ q'1
+Tsync_drain(q1, A, B, dA, dB, q'1) = q1 Λ A Λ B Λ q'1
+For a FIFO1 channel we have to encode three states, say bin(q)= 00, bin(q(1)) = 11
+and bin(q(0)) = 10, and then may represent the automaton by
+(чq1 Λ чq2 Λ A Λ чB Λ (q2' ↔ dA) Λ q'1) ∨ (q1 Λ чA Λ B Λ (q2 ↔ dB) Λ чq'1 Λ чq'2)
+The BDD-representation for the transition relation of a Reo network can be con- structed in a compositional manner, by mimicking Reo’s composition operators with corresponding operators on constraint automata and applying the analogous sym- bolic operations for manipulating switching functions. We will briefly consider the join operator which allows to collapse two nodes into a single node. Using some appropriate renaming of nodes, Reo’s join operator can be reduced on the automata level to a product construction that “synchronizes” the data flow at the common nodes of the given constraint automata (see [6]). If A1 and A2 are constraint au- tomata with node sets U1 and U2, respectively, then the concurrent I/O-operations in the product A1×A2 are given by the transition instances obtained by the following synchronization rule and two interleaving rules:
+
+g1	g2
+q1 ——→A1 p1,	q2 ——→A2 p2
+
+(q ,q )	g1∧g2
+(p ,p )
+
+1
+g1
+q1 ——→A1 p1
+(q ,q )	g1 ∧¬N2
+2 —————→A1 ×A2
+1	2
+g2
+q2 ——→A2 p2
+g2∧¬N1
+
+1 2 ———————→A1 ×A2 (p1, q2)	(q1, q2) ———————→A1 ×A2 (q1, p2)
+where чUi stands short for A∈Ni чA. These rules can be realized in a symbolic way by putting TA1 ×A2 = (TA1 Λ TA2 ) ∨ (TA1 Λ чU2 Λ idA2 ) ∨ (TA2 Λ чU1 Λ idA1 ), where idA = q∈Q(q ↔ q ) and Q is in the state space of A.
+Beside the transition relation, we also need a BDD-represent of the labeling
+function. This can be done by representing the characteristic function of Sat(ap)= 
+{q ∈ Q | ap ∈ L(q)} by a BDD for the induced function fap : Eval(q¯) → {0, 1}. BDD-representations fΨ for the satisfaction sets Sat(Ψ) of the subformulas Ψ of Φ
+
+are obtained by reformulating the BTSL model checking algorithm in a symbolic way with boolean operators and applying the corresponding BDD synthesis algo- rithms. A symbolic reformulation of Algorithm 1 is shown in Algorithm 2 where it is assumed that the BDD fΨ for Sat(Ψ) and a BDD-representation Terminal for the set of terminal states has already been constructed. We use the variable tuple
+q¯ = (q1,... , qn) to encode the states in A and ¯z = (z1,... , zm) for the states in Z. Subsets V of Q × Z are encoded by the variables in q¯ and ¯z. The notation V (q¯', ¯z') means that the variables of V are renamed into their primed copies. The sets Z0, ZF and Z√ are represented by BDDs with the variables ¯z.
+
+Algorithm 2 Computation of the symbolic representation f∃[α]Ψ for Sat(E[α]Ψ)  construct an NFA Z for A and generate BDD-representations TZ for the transition relation of Z and for the sets Z0, ZF and Z√;
+V := fΨ ∨ чZF ;
+repeat
+V ' := V ;
+R := 6q¯' 6A¯ 6d¯.	TA ⇒ Ez¯'. (TZ Λ V (q¯', ¯z')) ;
+V := (V Λ чR) ∨ (V Λ Terminal Λ Z√)
+until (V  = V );
+return 6¯z. (Z0 ⇒ V )	(* symbolic representation f∃[α]Ψ for Sat(E[α]Ψ) *)
+
+Examples and results
+We applied the BTSL model checker to a couple of examples. We will report here on two case studies. All results were achieved on a Pentium IV, 1.8GHz, 1.5GB RAM with Mandriva Linux and kernel 2.6.12. The tool was written in C++, compiled with GCC4.0.3 and uses JINC [18] as library for binary decision diagrams.
+Example 5.1 [Dining philosophers] The first example describes the well-known dining philosophers scenario, modelled in Reo as in [1], see Fig. 5.
+
+... 
+
+
+
+
+
+
+
+
+
+
+
+... 
+
+
+Fig. 5. Dining philosophers scenario
+
+The interface of philosopher i has four output ports take_lefti, take_righti, return_lefti and return_righti that serve to take and return the chopsticks on the left
+
+and right of the philosopher. The chopsticks are modelled by a FIFO1 channel and synchronous drain. The constraint automata for the interfaces of the philosophers and the chopsticks are shown in Fig. 6.
+
+
+
+(take lefti Λ чtake rightiΛ чreturn lefti Λ чreturn righti)
+
+
+
+(чtake lefti Λ take rightiΛ чreturn lefti Λ чreturn righti)
+
+
+
+Fig. 6. CA for philosopher and chopstick
+
+Table 1 illustrates the efficiency of the symbolic approach to construct the BDD- representation of the constraint automaton A for the whole system by the symbolic join-operation. The first column “size” shows the number of philosophers. The second column “time” shows the time needed for the synthesis phase, while the last column “reachable time” refers to the time needed to compute the reachable fragment of A. The other two columns refer to the size of the generated BDD for A and the maximal size of the BDDs generated during the symbolic computation.
+
+Table 1
+Synthesis results for the dining philosophers
+
+To give an impression of the size of the state space: the reachable part of the CA for 800 philosophers consists of about 10306 states. Several properties have been checked for this model of the dining philosophers. Table 2 shows the results for three BTSL formulas. The columns refer to the number of philosophers, number of steps in the model checking procedure namely the number of iteration within the fixpoint computation and the total amount of time needed to verify (or falsify) the given formula.
+
+
+Table 2
+Model Checking results for the dining philosophers
+
+The second formula does not hold since there is the run where all philosophers take their left chopstick and then wait forever for the missing right chopstick. This deadlock situation has been found with 798 iterations by means of a backward analysis. Computing the reachable part first by means of a forward analysis, the deadlock can be found in 403 steps within 13.92s only.
+Example 5.2 [Mutual exclusion] The second example is the component connec- tor shown in Fig. 7 that realizes a mutual exclusion protocol for n parallel processes (P1,... , Pn) where at each time instance at most k may perform their critical actions.
+
+
+
+requesti Λ чenteri Λ чreleasei
+
+
+
+
+чrequesti Λ enteri Λ чreleasei
+
+
+
+
+Fig. 7. Mutual exclusion scenario and CA for one process
+
+We assume here that the behavioural interface of each component Pi is repre- sented by the constraint automaton also depicted in Fig. 7.
+Table 3 summarizes the results for the generation of the BDD-representation, where n is the number of processes and k the maximum number of processes allowed to be in their critical section at the same time. For 200 processes and k = 60 this CA consists of more than 5 · 10119 reachable configurations.
+We performed the analysis with several BTSL formulas. Table 4 shows the results for three formulas:
+
+Φ1 = 6[request∗]( 
+1≤i≤n
+чcriti)
+
+Φ2 = E⟨true∗; enter1; A1; (enter2 Λ A2); A1; (enter3 Λ A3)⟩(crit1 Λ crit2 Λ crit3)
+Φ3 = 6[true∗; enter1; (чrelease)∗; ... ; enterk; (чrelease)∗)]чE⟨(чrelease)∗; enterk+1⟩true
+
+
+Table 3
+Synthesis results for the mutual exclusion network
+
+Table 4
+Model Checking results for the mutual exclusion
+
+Conclusion
+The purpose of the paper was to explain the functionality and foundations of our model checker for Reo networks. The efficiency has been illustrated by two examples that show that our model checking approach can handle even very large networks with up to 101200 configurations in a reasonable amount of time. Given the wide range of applications of the Reo framework, see e.g. [13,20,9], we believe that our model checker yields an important contribution for formal reasoning about exoge-
+
+neous coordination models. Beside further optimizations to increase efficiency and case studies, we will extend our implementation to reason about real-time constraints with the logic TDSL [3] or a branching time version thereof and about dynamic re- configurations by means of the logic considered in [10] or other formal frameworks for Reo’s dynamic operations.
+
+References
+F. Arbab, Abstract Behavior Types: A Foundation Model for Components and Their Composition, In [7],33-70, 2003.
+F. Arbab, Reo: A Channel-based Coordination Model for Component Composition, Mathematical Structures in Computer Science, 14(3):1-38, 2004.
+F. Arbab and C. Baier and F. de Boer and J. Rutten, Models and Temporal Logics for Timed Component Connectors, In Proc. SEFM’04, IEEE CS Press, 2004.
+F. Arbab and C. Baier and F. de Boer and J. Rutten, Models and Temporal Logics for Timed Component Connectors, Software and Systems Modelling (to appear), 2006.
+F. Arbab and J.J.M.M. Rutten, A coinductive calculus of component connectors, In Proc. 16th WADT, volume 2755 of LNCS, pages 35-56, 2003.
+C. Baier and M. Sirjani and F. Arbab and J.J.M.M. Rutten, Modeling Component Connectors in Reo by Constraint Automata, Science of Computer Programming, 61:75-113, 2006.
+F.S. de Boer and M.M. Bonsangue and S. Graf and W.-P. de Roever, Formal Methods for Components and Objects, LNCS 2852, Springer, 2003.
+R. Bryant, Graph-Based Algorithms for Boolean Function Manipulation, IEEE Transactions on Computers, C-35, 1986.
+D. Clarke and D. Costa and F. Arbab, Modeling Coordination in Biological Systems, In Proc. of the Int. Symposium on Leveraging Applications of Formal Methods, 2004.
+Dave Clarke, Reasoning about Connector Reconfiguration II: Basic reconfiguration Logic, In Proc. FSEN’05, Teheran, Electronic Notes in Theoretical Computer Science, 2005.
+E. Clarke and E. Emerson and A. Sistla, Automatic Verification of Finite-State Concurrent Systems Using Temporal Logic Specifications, ACM Transactions on Programming Languages and Systems, 8(2):244-263, April 1986.
+E. Clarke and O. Grumberg and D. Peled, Model Checking, MIT Press, 1999.
+N. Diakov and F. Arbab, Compositional Construction of Web Services Using Reo, In Proc. International Workshop on Web Services: Modeling, Architecture and Infrastructure (ICEIS 2004), Porto, Portugal, April 13-14, 2004.
+E. Emerson and C. Lei, Modalities for Model Checking: Branching Time Strikes Back (extended abstract), In Proc. 12th Annual ACM Symposium on Principles of Programming Languages (POPL), pages 84-96, SIGPLAN, ACM Press, 1985.
+M. Fischer and J. Ladner, Propositional dynamic logic of regular programs, Journal of Computer and Systems Sciences, 18:194-211, 1979.
+G. Hachtel and F. Somenzi, Logic Synthesis and Verification Algorithms, Kluwer Academic Publishers, 1996.
+K. McMillan, Symbolic Model Checking, Kluwer Academic Publishers, 1993.
+J. Ossowski, JINC, a bdd library (to be published), www.jossowski.de.
+I. Wegener, Branching Programs and Binary Decision Diagrams. Theory and Applications, Monographs on Discrete Mathematics and Applications, SIAM, 2000.
+Z. Zlatev and N. Diakov and S. Pokraev, Construction of Negotiation Protocols for E-Commerce Applications, ACM SIGecom Exchanges, 5:2):11-22, November 2004.

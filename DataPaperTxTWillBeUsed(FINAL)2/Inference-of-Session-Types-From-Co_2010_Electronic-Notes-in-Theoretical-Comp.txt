@@ -1,0 +1,731 @@
+
+
+Electronic Notes in Theoretical Computer Science 238 (2010) 15–40
+www.elsevier.com/locate/entcs
+Inference of Session Types From Control Flow
+Peter Collingbourne1 Paul H J Kelly2
+Department of Computing Imperial College London London, SW7 2AZ United Kingdom
+
+Abstract
+This is a study of a technique for deriving the session type of a program written in a statically typed im- perative language from its control flow. We impose on our unlabelled session type syntax a well-formedness constraint based upon normalisation and explore the effects thereof. We present our inference algorithm declaratively and in a form suitable for implementation, and illustrate it with examples. We then present an implementation of the algorithm using a program analysis and transformation toolkit.
+Keywords: Session types, imperative programming, control flow, type inference, program analysis
+
+
+Introduction
+The session type [10] is a means of characterising dyadic interaction between pro- cesses over a communication channel. A session type is a property of a session, a communication link established over a channel. Process interactions are expressed as a sequence of communication actions, and any communication taking place over the session with which the type is associated must conform to the sequence of actions. Although the roots of session typing can be traced to the π-calculus [15], it has also been applied to a wide range of programming paradigms, including object-oriented imperative programming [6].
+A session type may take a number of forms, but let us presently consider a session type consisting of a graph where a communicating process is associated with a single node in a graph. A communication action must be conformant with an outgoing arc at the process’s current node, and causes the appropriate arc of the session type to be followed, based on the type of the communication action. Figure 1 shows three session type graphs (a), (b) and (c), of which (a) and (b), and (a) and (c)
+
+1 Email: pcc03@doc.ic.ac.uk
+2 Email: p.kelly@imperial.ac.uk
+
+1571-0661 © 2010 Published by Elsevier B.V. Open access under CC BY-NC-ND license.
+doi:10.1016/j.entcs.2010.06.003
+
+
+
+s1	s1	s1
+
+
+
+out α
+out α
+in α
+in α
+
+
+
+
+s2	s4	s2	s4
+
+
+
+in β
+in γ
+out β
+out γ
+
+
+
+
+s3	s5	s3	s5
+
+
+(a)	(b)	(c)
+
+Fig. 1. Three exemplary session type graphs.
+
+are purportedly compatible with each other (due to the common subgraph). Let us consider two processes A and B with respective session type graphs (a) and (b). Both processes start in state s1. Firstly process A sends a message of type α and transitions to state s4. When process B receives this message it transitions to state s2. Process B then sends a message of type β. However, process A cannot process this message as, according to its session type graph, it may only receive messages of type γ. A similar situation arises with interacting processes A and C of types (a) and (c) where process A first transitions to state s2 upon receiving the message of type α. We can thus conclude that it is impossible to construct a session type such that processes with that session type may safely communicate with processes with session type (a).
+Note that process A makes an internal choice about which of its two branches is taken before sending the value of type α. Notice further that no information was passed from process A to its peer regarding its choice of branch. This is what we expect in a session type system with implicit choice. In this paper we shall explore how the above situation may arise in a session type inference system that produces session types with implicit choice and how we may detect it.
+We claim the following contributions:
+The first session type inference algorithm known to the authors for statically- typed imperative languages with a session type syntax based on implicit choice;
+A normalisation-based well-formedness constraint for session types with a syntax
+
+based on implicit choice;
+A property that ensures session type safety for session types with a syntax based on implicit choice which simultaneously permit both inputs and outputs, known as the safe directionality property;
+An implementation of session type inference, based on a session-based communi- cating process library for C++.
+
+Background: implicit choice in session types
+In most existing literature, session types are expressed as expressions with a spec- ified syntax. Session type syntax is generally recursive. This allows for arbitrary composition of communication actions in whichever form fits the structure of the program. A session type may take a number of forms, whose semantics we shall briefly describe. A session type may be an action. An action specifies a communi- cation direction (in or out) and type (this may be a language-specific primitive type or, in the case of delegation [6], another session type). An action represents, depen- dent on the communication direction, the reception or transmission of a value (or session) of the specified type. A session type may also be the sequential composition of two or more session types. The session type that is the composition of one or more session s1, s2...sn represents the actions in s1, followed sequentially by those in s2 and so on up to sn. A session type may also be a choice between a number of sessions s1, s2...sn. The process of making a decision between these choices is described in the following paragraph. A session type may also be the terminating session type. A session with the terminating session type may not perform any communication actions or change its type. It may only close the communication channel.
+A process may commit to one of these choices either passively or actively, and either implicitly or explicitly. If a process makes the choice actively, then the choice was made by the process based on its choice of communication steps. If the process makes the choice passively, then the choice was made based upon the active choice made by its peer.
+Under implicit choice, the process performs a communication action that is con- sistent with only one of the choices. Note that the process’s role in committing to the choice is either active or passive depending on the direction of the communi- cation action. If the process transmits data, its role is active; if it receives data, its role is passive and its choice depends on the type of the data received. [5] is an example of a system which contains a form of implicit choice.
+Under explicit choice, the process performs some action other than a commu- nication action that has the effect of selecting a particular choice. The literature includes a number of ways of expressing explicit choice. In [10], choice is represented
+by the & and ⊕ binary operators. A process whose session type is of the form s1&s2
+makes a passive choice between s1 and s2, whereas a process whose session type is of the form s1 ⊕s2 makes an active choice via the inl and inr operators. In [8,9], each choice is annotated with a label. The process making the active choice transmits
+
+the label corresponding to its desired choice, and the process making the passive choice chooses the session type corresponding to the label it receives.
+After performing a communication action, or in the case of explicit choice an- other relevant action, the current type of the session mutates in order to reflect the current state of the channel. If a choice has been made, the session type is replaced with the type corresponding to the choice that has been made. If a communication action has occurred, the type representing that communication action is removed from the beginning of the current session type. The resultant session type is known as the continuation type of that session type under the given action.
+Compatibility [8] is a relation between session types that indicates whether two programs with specified session types are guaranteed to communicate with each other safely; that is, without any possible protocol incompatibilities at runtime. The compatibility relation has in particular been useful in specifying and verifying contracts between two parties: by verifying compatibility before a potential com- munication takes place it is possible to check that no protocol incompatibilities may possibly occur between the two parties – provided that both parties abide by their session type contracts. It is clear that a necessary condition for a session type to be compatible with another is that it must accept at least the data types which the other may emit. We shall see a more formal definition of this concept later.
+The goal of this work is to investigate means for inferring a session type using program analysis techniques given an imperative program consisting of a sequence of communication actions. In some process formalisms, such as the π-calculus as described in [10], there is normally no need for an inference algorithm, as the con- struction rules for a process implicitly perform typing. Here we adopt a language- neutral approach better suited to the structure of imperative programs, using con- trol flow and expression typing information provided by the host language to derive an appropriate session type. In contrast to many other studies of session type in- ference [10,6], our session types use implicit choice. Our rationale for this design decision is that implicit choice provides a closer mapping between the behaviour of the program and its session type. Additionally, it frees the programmer from the burden of providing a tag name for each communication action in an untyped program. We shall explore the consequences of this decision on our type inference technique.
+Our type inference tool allows us to decide interface compatibility between pro- grams without the need for a formal protocol specification beyond that implied by the programs’ typing and control flow structures. For example, a programmer can write a server communication program to be used in a client/server architecture and expect any clients with which it communicates to be constrained by its proto- col without any extra work. There are two key steps in such a process: firstly, our inference algorithm is employed to determine the session types governing those pro- grams for which we wish to decide compatibility; secondly, compatibility is checked via the host language’s type system, a necessary foundation of such compatibility checking being the ability to augment, or simulate the augmentation of, the host language’s type system to recognise the session type’s subtyping relation.
+
+
+while  (1)  {
+int x; 
+recv choice  (s)  {
+case  Req1 :
+s . receive ( Req1(x ) ) ;
+s . send ( x +1); 
+case  Req2 :
+s . receive ( Req2(x ) ) ;
+s . send ( x +2); 
+case  Quit :
+s . receive ( Quit ()); s . close ( ) ;
+return ;  // e x i t  subroutine 
+}
+}
+
+Fig. 2. Simple pseudocode server process.
+
+int x; 
+s . send ( Req1 (42)); 
+s . receive (x ) ;
+s . send ( Quit ()); s . close ( ) ;
+
+Fig. 3. Simple pseudocode client process.
+
+Example
+Consider the server program shown in Figure 2, which we wish to interface with the client program shown in Figure 3. We verify by inspection that these two programs will interface with each other correctly, and so does our system by means of session type inference and compatibility checking.
+Our system can infer the types of both processes. The inferred type for session
+s in Figure 2 is
+
+μt.(in Req1.out int.t|in Req2.out int.t|in Quit.end) and the inferred type of session s in Figure 3 is
+out Req1.in int.out Quit.end
+
+Using these types the augmented type system of the host language will verify com- patibility.
+
+
+
+Fig. 4. Syntax for a Ninja session type.
+
+Deﬁnitions
+Our inference system is specified in two distinct ways. Firstly we shall provide a set of inference rules and a methodology for applying them in order to derive a session type. Secondly we shall describe a graph-based implementation technique for the algorithm. The graphs used by this technique are based on finite automata [18] and thus we employ a number of techniques from this field, including the subset construction [18].
+Ninja is a specification for a component-based imperative language extension.
+Ninja can be considered an implementation of common component models such as architecture description languages as shall be described in Section 2. It may extend most imperative languages, however our implementation is for the C++ language and is known as Ninja-C++. We describe the implementation of Ninja-C++ and of a type inference tool for it.
+Figure 4 shows the syntax for session types in the Ninja language. Note that in informal discussions we use the associativity of “|” and “.” to elide parenthe- ses wherever possible. Most of the semantics is clear with reference to Section 1, however note the syntax elements (Mu) and (TV). These are standard [17] syn- tax elements used for recursive type definitions. (Mu) declares a type variable t of arbitrary name for use. Corresponding (TV) elements are found within the (Mu) element and are equivalent to the whole of the corresponding outer (Mu).
+Ninja is a component based language; components are active and are known as
+participants. Participants communicate with each other over channels of specified session types, which means their session types must be compatible. We proceed to introduce our notion of compatibility as initially defined by [8] and extended by, among others, [20]. In order to determine compatibility we must first define equiva- lence, continuation, subtyping and duality for our session type syntax. Equivalence (≡) is the smallest relation that satisfies the rules given in Figure 5. The contin- uation type of a session type under a given communication action may be derived using the rules given in Figure 6.
+Many of the equivalence and continuation rules are self explanatory, however we feel it necessary to give a justification of rule (|Dist ←). This will be done in
+
+Section 3.1 after the necessary background has been described.
+
+Definition 1.1 Free names over session types.
+
+FN(μn.s) = FN(s) \ n
+FN(end) = ∅
+FN(n) = {n},n a type variable
+FN((t1|t2)) = FN(t1) ∪ FN(t2)
+FN((t1.t2)) = FN(t1) ∪ FN(t2)
+FN(a) = ∅
+
+Definition 1.2 Input and output domains.
+
+idom(μn.s) = idom(s)	odom(μn.s) = odom(s)
+idom(end) = ∅	odom(end) = ∅
+idom(n) = ∅,n a type variable		odom(n) = ∅,n a type variable idom((t1|t2)) = idom(t1) ∪ idom(t2) odom((t1|t2)) = odom(t1) ∪ odom(t2) idom((t1.t2)) = idom(t1)	odom((t1.t2)) = odom(t1)
+idom(in t) = {t}	odom(in t) = ∅
+idom(out t) = ∅	odom(out t) = {t}
+
+
+Definition 1.3 Type simulation [8]. A type simulation is a relation R that satisfies the following property.
+
+(S1, S2) ∈ R ⇒ idom(S1) ⊆ idom(S2)
+∧ odom(S1) ⊇ odom(S2)
+∧ ∀t ∈ idom(S1)∃S' , S' : (S1 −in→t S' ∧ S2 −in→t S' ∧ (S' , S' ) ∈ R)
+1	2	1	2	1	2
+∧ ∀t ∈ odom(S2)∃S' , S' : (S1 o−u→t t S' ∧ S2 o−u→t t S' ∧ (S' , S' ) ∈ R)
+1	2	1	2	1	2
+Definition 1.4 Subtyping 3 . S1 ≤ S2 iff there exists a type simulation R such that (S1, S2) ∈ R.
+
+
+3 This is an extension of the host language’s subtyping relation to provide subtyping over session types.
+
+
+
+S ≡ S
+
+S1 ≡ S2 S2 ≡ S1
+(Refl)
+
+
+(Sym)
+idom(S1) = idom(S2) ((S.S1)|(S.S2)) ≡ (S.(S1|S2))
+
+((S1.S)|(S2.S)) ≡ ((S1|S2).S)
+
+(|Dist ←)
+
+
+(|Dist →)
+
+
+
+S1 ≡ S2	S2 ≡ S3 S1 ≡ S3
+
+(Trans)
+S1 ≡ S'
+(S1|S2) ≡ (S' |S2)
+
+(|Cong)
+
+
+
+w ∈/ FN(S) μv.S ≡ μw.(S[w/v])
+
+(μRen)
+S1 ≡ S'
+(S1.S2) ≡ (S' .S2)
+
+(.Cong ←)
+
+
+
+
+μv.S ≡ S[μv.S/v]
+(μExp)
+S2 ≡ S'
+(S1.S2) ≡ (S1.S' )
+
+(.Cong →)
+
+
+
+
+
+(S|S) ≡ S (|Idem)
+
+(S |S ) ≡ (S |S ) (|Comm)
+S ≡ S'
+μv.S ≡ μv.S'
+
+(μCong)
+
+1  2	2  1
+v ∈/ FN(S1)
+(|Assoc) μv.(S1.S2) ≡ (S1.μv.(S2[(S1.v)/v]))
+(.Rot →)
+
+((S1|S2)|S3) ≡ (S1|(S2|S3))
+
+v ∈/ FN(S2)
+
+
+(.Rot ←)
+
+((S .S ).S ) ≡ (S .(S .S )) (.Assoc) μv.(S1.S2) ≡ (μv.(S1[(v.S2)/v]).S2)
+1  2	3	1	2  3
+
+Fig. 5. Rules for equivalence
+
+
+S ≡ (a.S')
+S −a→ S'
+
+(Cont)
+S1 −a→ S'
+(S1|S2) −a→ S'
+
+(|Elim ←)
+S2 −a→ S'
+(S1|S2) −a→ S'
+
+(|Elim →)
+
+
+
+
+Definition 1.5 Duality.
+Fig. 6. Rules for continuation
+
+
+	
+in t = out t	out t = in t
+
+S1.S2 = S1.S2	S1|S2 = S1|S2
+
+μv.S = μv.S	v = v, v a type variable
+
+end = end
+
+Definition 1.6 Compatibility.
+
+T da S ⇐⇒ T ≤ S
+i.e. T is defined as compatible with S iff its complement is a subtype of S.
+In order to preserve compatibility between two peers in states where both inputs and outputs are permitted, we impose the safe directionality property on all valid sessions. The safe directionality property is justified in Appendix A.
+Definition 1.7 Safe directionality. A session S is safe-directional iff
+
+(idom(S) /= ∅∧ odom(S) /= ∅) →
+∀to ∈ odom(S)∃S' : S o−ut→to S' ∧ S ≤ S'
+
+∧ ∀ti
+∈ idom(S)∃S' : S in ti S' ∧ S' ≤ S
+
+
+Type Mutation and Linearity
+Throughout this paper, we assume a statically typed language. However, session type theory [10] states that after a session has performed a communication action, its type must automatically mutate to the session’s continuation type relative to the action that has taken place. Most statically typed languages do not permit a variable’s type to mutate under any circumstances, although some do allow for a variable to be overridden by one with the same name but a more restrictive scope. This seems to be the only practical way to simulate type ‘mutation’, but the requirement to create a new scope after every communication operation would severely restrict the structure of a program. So we adopt the strategy of introducing a new session variable after each communication action.
+After we have used a session variable (i.e. by sending or receiving over it), it becomes invalid. This means that any further use of the variable is an error and would violate our typing system. A variable with such a constraint imposed upon it is known as [22] a linear variable, and any program that satisfies this property is said to satisfy the linearity constraint. We have developed a prototype tool to check linear usage of session values [3].
+
+Closing a Session
+In order to ensure the correct behaviour of the program, we impose the follow- ing constraints on the operation of closing a session. Sessions of type end must close their session by performing the close operation on the session. Furthermore, sessions of any other type may not close. The second constraint is trivial to en- force, but we may enforce the first constraint by asserting that for each statement a that assign to a session s of type end, there must exist a statement c of the form s.close() such that
+c pdom a
+
+
+component  filter  {
+provide  output<stream  char >;
+require  input <stream  char >;
+}
+
+Fig. 7. An example of a Darwin component type (courtesy [14])
+i.e. c postdominates [1] a. Intuitively this means that all sessions that are scheduled to close (by a communication operation resulting in a session of type end) are guaranteed to close by the control flow of the program, provided the program is not interrupted, e.g. by the operating system.
+The deﬁnite termination property states that only sessions of type end may be
+closed. This property ensures synchrony between the communicating processes.
+
+Related Work
+This work’s main underpinning, session typing, was first introduced by Honda [10]. This work also introduced session type inference for the π-calculus. Dezani-Cianca- glini et al [6] brought session types to the imperative world with the language Moose. They [5] later expanded upon this work with a notion of compatibility [8].
+Other means of specifying and verifying protocols for compatibility include finite state automata (including interface automata [4] and choreography [7]), channel contracts [11] and component interfaces [2].
+Ninja provides a component model similar to that of the Unified Modeling Lan-
+guage [16] or architecture description languages such as Darwin [14]. While the UML component model largely deals in the abstract, permitting any form of communi- cation such as a streaming model, shared memory model or procedure calls, Ninja’s
+model, similar to Darwin’s, restricts communication to a streaming model using the provided communication channels. Darwin’s communication channels have a simple
+notion of typing as shown in the example component type of Figure 7, however the session typed nature of Ninja’s channels affords a greater deal of flexibility.
+
+Derivation and Canonicity
+This section provides a high level description of our inference algorithm’s derivation steps. As our algorithm is language independent, the control structure is defined by the language. In particular, the host language should define the following:
+Stmts  set of session program statements
+▶    type assignment for expressions
+EX   syntax for expressions
+S	syntax for session variables
+The syntax for program statements that operate on sessions is, however, defined
+
+
+|	S .close()	(Close)
+|	(Lambda)
+
+Fig. 8. Syntax of session statements. Greyed out syntax is not present in the input data.
+
+by the syntax given in Figure 8. Our algorithm supports an unbounded number of concurrent sessions.
+
+Definition 3.1 Choice composition. The choice composition operator	is defined nondeterministically as follows.
+T = ⎧⎨ (t| (T \ {t})), |T|≥ 2 ∧ t ∈ T
+⎩ t,	T = {t}
+
+Definition 3.2 Canonicity. In the following, a is an action.
+(S1|S2) is canonical if sessions S1 and S2 are canonical, idom(S1) ∩ idom(S2) = 
+odom(S1) ∩ odom(S2) = ∅, S1 /≡ end and S2 /≡ end.
+(a.S) is canonical if S is canonical.
+(S1.S2) is not canonical if S1 is not an action.
+μv.S is canonical if S is canonical and v ∈ FV(S).
+end is canonical.
+v is canonical.
+a is not canonical.
+
+We begin by rewriting all statements of form [s.send(e)]] to [[s := s.send(e)]]; and all statements of form [s.receive(e)]] to [[s := s.receive(e)]]. We proceed to convert session statements to single static use [13] form. The rules given in Figure 9 are then applied to assign a type to each session variable by solving for Δ = ∅ where Γ contains language-specific typing information for the current context. Each well- formed type must have a canonical form as described in Definition 3.2, which is equivalent to the original derived type according to the equivalence rules given in Figure 5. If any type is not well-formed, i.e. it does not have an equivalent canonical form, the inference algorithm fails. After the canonical form for each session type is derived, we eliminate λ statements by first globally replacing any session variable appearing on the left hand side of a λ statement with the session variable named on the right hand side, then removing the λ statements themselves. Note that session variables retain the type assigned to them before λ statements were eliminated.
+
+
+
+[[s.close()]] ∈ Stmts
+Γ, Δ ▶ s : end
+
+(Close)
+
+
+
+[[s':=s.send(v)]] ∈ Stmts Γ ▶ v : tv ϕ fresh Γ, Δ[s '→ ϕ] ▶ s' : ts'	s ∈/ dom Δ
+Γ, Δ ▶ s : μϕ.(out tv.ts' )
+
+
+(Send)
+
+
+
+[[s':=s.receive(v)]] ∈ Stmts Γ ▶ v : tv ϕ fresh Γ, Δ[s '→ ϕ] ▶ s' : ts'	s ∈/ dom Δ
+Γ, Δ ▶ s : μϕ.(in tv.ts' )
+
+
+(Recv)
+
+
+
+[[λ(s1, s2,..., sn):=s]] ∈ Stmts ϕ fresh
+∀1 ≤ i ≤ n : Γ, Δ[s '→ ϕ] ▶ si : ti
+Γ, Δ ▶ s : μϕ.( {ti : 1 ≤ i ≤ n})
+
+Δ(s) = ϕ
+
+
+(Lambda)
+
+(Abbrv)
+Γ, Δ ▶ s : ϕ
+
+
+Justiﬁcation
+Fig. 9. Type inference rules
+
+This section gives reasoning behind parts of our derivation process given above.
+Canonicity rule (i) ensures that no two alternatives in a choice construct may present the same choices. This rule ensures the deferment of such choices to the last possible moment. This reflects the restrictions imposed on the communicating process, namely that a process may only choose which branch it takes on the basis of the type of the variable it sends or receives, and not any other information. In the process of applying equivalence rules to a session type in order for it to conform with canonicity rule (i), equivalence rule (|Dist ←) will be most frequently employed. This rule prevents the situation shown in Section 1 where two distinct branches of a session type are initially distinguished by the types of their inputs. There is no need to impose such a rule on branches which are initially distinguished by the types of their outputs, as a communicating process may simply accept both value types at this point.
+
+Algorithm
+This section supplies a concrete description of our type inference algorithm suitable for implementation. Our algorithm is implemented in three stages. For the purpose
+
+
+if  ( ∗ ) {
+s1 := s1. send ( int )  ;
+s1 := s1. receive ( int )
+} else {
+s1 := s1. send ( long )  ;
+s1 := s1. receive ( long )
+} ;
+s1 := s1. send ( bool )
+
+Fig. 10. Simple LN program.
+of illustration we shall use a simplified version of Ninja-C++ called LN whose syntax contains only if, while and session communication statements with the symbol ∗ substituted for boolean expressions and expression types substituted for all other expressions and whose control flow is defined in the obvious way. It is possible to translate a Ninja-C++ program written in C++ into LN by converting for loops into while loops in the usual way, removing all variable declarations, removing all statements without a counterpart in LN and replacing all primitive values with their types. Note that LN does not include invocations because we are not inferring the type of the channel; it may have any type less specific than the participant’s dual and more specific than the invoker’s, and compatibility between participants and invokers is achieved by upcasting the return value from the invoke method into the appropriate type. Our language supports an unbounded number of concurrent sessions.
+
+Stage 1: Static Single Use
+The first step is to ensure that no session variable is reused more than is necessary. This is different from the linearity constraint mentioned in Section 1.4; what we would like to do here is to detect legitimate, linear programs that reuse session vari- ables instead of using a fresh variable wherever possible, meaning that our inference algorithm would generate too general a session type. In the most extreme case, only one session variable is used throughout an entire procedure (note that this is the starting point of our derivation algorithm). Thus the program’s communication statements are first converted to SSU [13] form. Figure 10 shows a program in LN with liberal reuse of session types, and Figure 11 shows the same program after SSU has been applied to it.
+
+Stage 2: Graph Building
+After obtaining the SSU form of the program, we then build a graph of the session transitions contained within the program using its communication statements. The function g that builds this graph is shown in Figure 12, assisted by the uniﬁcation mapper fG shown in Figure 13. The goal of this function is twofold:
+to extract all communication actions and collect them into a graph with arcs
+
+
+λ (s2 , s3) := s1 ;
+if  ( ∗ ) {
+s4 := s2. send ( int )  ;
+s6 := s4. receive ( int )
+} else {
+s5 := s3. send ( long )  ;
+s6 := s5. receive ( long )
+} ;
+s7 := s6. send ( bool )
+
+Fig. 11. Simple LN program after SSU applied.
+
+g(p)	=	fG(G, δ)
+where (G, δ)	=	fP (p)
+fP (s' := s .send(t))	=
+(({{s}, {s'}}, {({s}, {s'}, out t)}, ∅), λx.x) fP (s' := s .receive(t))	=
+(({{s}, {s'}}, {({s}, {s'}, in t)}, ∅), λx.x)
+
+where ((n1, e1, a1), δ1)	=	fC(c1)
+((n2, e2, a2), δ2)	=	fC(c2)
+Fig. 12. Graph building function g.
+
+
+({δ(n)|n ∈ N},
+ft((N, E, A), δ) = {(δ(n), δ(n'), e)|(n, n', e) ∈ E},
+{δ(a)|a ∈ A}) ϵ(S)(x) = ⎧⎨ x ∪ S, x ∩ S /= ∅
+⎩ x,	otherwise
+Fig. 13. Unification mapper and helper function є.
+between source and target session variables;
+for variable assignments, ensure that the source and target sessions receive the same type (this is the purpose of the δ function built by ft). The helper function ϵ (Figure 13) assists in this by providing a means for a given set of variables to receive the same type.
+After the graph is built, the definite termination property is checked. The defi- nite termination property can be expressed as follows for a graph G = (N, E, A):
+∀a ∈ A : ∄n2 ∈ N, e : (a, n2, e) ∈ E
+
+Note that if multiple sessions are used concurrently, the graph will be composed of disjoint subgraphs. These graphs are independent and will not affect one another except possibly during safe merging operations in stage 3.
+
+Stage 3: Graph Simpliﬁcation and Translation
+At this stage we must first process the graph in order to identify and merge nodes such that semantics are preserved. Furthermore we wish to identify invalid graphs.
+To begin with, let us define a notion of node equivalence within our graph.
+Definition 4.1 Node equivalence within a graph.
+
+eq(ns, c, (N, E, A)) ←→ ns ∈ c ∨ |ns|≤ 1 ∨
+( {eq({n'|n ∈ ns ∧ (n, n', e) ∈ E}, c ∪ {ns}, (N, E, A))
+|n ∈ ns ∧ (n,, e) ∈ E}
+∧(ns ⊆ A ∨ A ∩ ns = ∅))
+
+n1 ≡t n2 ↔ eq({n1, n2}, ∅, G)
+Definition 4.2 Applying a substitution function. To apply a substitution function δ, we replace the current graph G with the result of unification mapper ft(G, δ), where ft is defined in Figure 13.
+
+
+τ (n, G) = τS({n}, G, ∅)
+
+⎪	{(a.τS({n' : n ∈ ns ∧ (n, n', a) ∈ E},
+
+τS (ns, (N, E, A), δ) = ⎪⎨ μϕ.	(N, E, A), δ[n →'	ϕ : n ∈ ns]))
+ns ∩ A = ∅
+,
+
+⎪	: n ∈ ns ∧ (n, , a) ∈ E}
+ϕ fresh
+
+⎪⎩ end,	otherwise
+
+Fig. 14. Session type building function τ .
+We may unify nodes provided that they are node equivalent, according to Defi- nition 4.1. This allows us to simplify graphs with multiple convergent arcs with the same label leading to a single node. For each pair of nodes n1 and n2 in our graph G such that n1 ≡t n2, we apply the substitution function ϵ(n1 ∪ n2).
+A second case we must deal with is divergence. Should a graph have many divergent arcs with the same label leading to nodes n1, n2...nn, we must replace these nodes and any dependent subgraph with a single node n and associated subgraph such that ∀i ∈ {1...n},τ (n) ≤ τ (ni), where τ is the session type building function defined in Figure 14. The initial processing may be achieved by treating our session graph as a NFA, converting it into a DFA using the subset construction and rejecting any graph that does not satisfy this property. This transformation is sound as it has been proven [18] that each NFA has an equivalent DFA (accepting the same language or, in our case, sequence of communication actions) which translates directly to trace soundness.
+Before we check this property we must convert node labels in the DFA from sets of sets to sets in order to make it consistent with the NFA. This is done by applying the substitution function
+δ(x) =  x
+A simple way of verifying the above property is to do so ‘superficially’ between each node in the DFA graph and each corresponding component node in the original graph, as formulated below.
+Definition 4.3 Superficial subtyping. A type graph H = (NH, EH, AH ) is a su- perficial subtype of a type graph G = (Nt, Et, At) iff:
+
+∀nh ∈ NH, ng ∈ Nt : ng ⊆ nh =⇒ idom(sg) ⊆ idom(sh)
+∧ odom(sg) ⊇ odom(sh)
+where sg = τ (ng, G)
+sh = τ (nh,H)
+
+Note that in practice, the superficial subtyping property implies that each node
+
+must have an identical set of input types, and there are no restrictions on output types.
+If the DFA nodes have overlapping subsets, which is entirely possible based on the structure of our program, we will not be able to type those session variables that appear in two or more nodes, as each session variable must have a single type. Thus for each node in the original graph we must merge all nodes in the resultant graph containing that node; i.e. for each original node n we apply the substitution function
+
+
+δ(nh
+) = ⎧⎨  {m|m ∈ NH ∧ n ∈ m}, if n ∈ nh
+⎩ nh,	otherwise
+
+If the new graph no longer satisfies the superficial subtyping, definite termination
+or safe directionality property given above, we must reject it.
+Note that the merging of overlapping subsets preserves trace soundness but not trace completeness. This is a small concession, and because we applied SSU to the program before simplifying the graph, it is also the smallest possible concession that we can make.
+We may now extract the session types from our graph by employing the τ func- tion shown in Figure 14 and using equivalence rules, in particular μExp and con- gruence, in order to eliminate unnecessary μ operators.
+
+Example
+This section presents an example of how our algorithm is used to derive session types. We start with the following communication procedure
+void  server ( session  s)  {
+while  (1)  {
+s = s . receive ( Req1(x ) ) ;
+if  (x%2) {
+s = s . send ( x +1); s = s . receive (x ) ;
+s = s . send (( char )  x%256);
+} else {
+s = s . send (x − 1); s = s . receive (x ) ;
+s = s . send (( long )  x <<16);
+}
+}
+}
+Firstly we convert this program to LN by removing statements and simplifying:
+while ( ∗ ) {
+s1 := s1. receive ( Req1)  ;
+if  ( ∗ ) {
+
+s1 := s1. send ( int )  ;
+s1 := s1. receive ( int )  ;
+s1 := s1. send ( char )
+} else {
+s1 := s1. send ( int )  ;
+s1 := s1. receive ( int )  ;
+s1 := s1. send ( long )
+}
+}
+We proceed to stage 1, converting to SSU form:
+while ( ∗ ) {
+s2 := s1. receive ( Req2)  ;
+λ (s3 , s4) := s2 ;
+if  ( ∗ ) {
+s5 := s3. send ( int )  ;
+s6 := s5. receive ( int )  ;
+s1 := s6. send ( char )
+} else {
+s7 := s4. send ( int )  ;
+s8 := s7. receive ( int )  ;
+s1 := s8. send ( long )
+}
+}
+Applying the graph building function ft we obtain the graph shown in Figure 15. This graph has no accepting states so the definite termination property vacuously holds.
+The graph has no recursively equal nodes for us to unify, so we proceed to DFA building using the subset construction, giving us the graph shown in Figure 16. In this graph, each node is a disjoint subset of the set of sessions, so our substitution
+function has no effect. Applying the τ function to our graph to produce a Ninja
+session type, we deduce the following overall type assignment for s1:
+
+
+s1 : μt.in Req2.out int.in int.(out char.t|out long.t)
+
+
+
+Sessions in C++
+This section shall describe how the Ninja language has been adapted to standard C++ in our language Ninja-C++, without the use of any special compilers or lan- guage extensions.
+
+{s1}
+
+
+in Req2
+
+
+{s2, s3, s4}
+
+
+
+out char
+out int
+out int
+out long
+
+
+
+{s5}	{s7}
+
+
+in int	in int
+
+
+{s6}	{s8}
+
+Fig. 15. Result of graph building function fG applied to Example 1.
+
+Sessions and Channels
+In Ninja-C++ sessions are represented as a hierarchy of template instantiations, as the C++ template mechanism allows us to specify a user-defined type hierarchy. As we shall see, the template-based representation can express almost every session type in our algebraic representation, modulo equivalence, discounting some restrictions on choice.
+We distinguish between Ninja actions and sessions.  An action is a primitive
+communication step, such as in int (of the form D V T from Figure 4), whereas a session is a fully specified session which may include sequential composition, choice etc. Actions in Ninja-C++ shall take the form in<T> or out<T>, where T is the
+primitive data type to be sent or received across the channel.
+For sessions, the two main constructs that we must represent are sequential composition (. in Ninja) and choice (| in Ninja). Sequential composition will com- pose an action with a session (its continuation), so our best choice of representation is seq<A,S>, A being the action and S the session. For the choice construct we compose sessions via a tuple-style representation of the form choice<S1,S2,...,Sn>. The constraints implied by these template declarations allow for relatively trivial derivation of the input domain, output domain and continuation type of a particular type at each stage and, for this reason, provide the basis for additional constraints imposed on derived types as we shall see.
+
+{s1}
+{s2, s3, s4}
+
+
+
+out int
+out char
+out long
+
+
+
+{s5, s7}
+
+{s6, s8}
+
+Fig. 16. Result of subset construction applied to Figure 15.
+
+struct  s ; 
+typedef  seq<in<int >, call <s> > r ; 
+struct  s { typedef r  t ;  } ;
+
+Fig. 17. A recursive session type representing an infinite stream of int inputs
+
+Frequently when designing session types, we must be able to create recursive types. This will commonly occur when we would like to represent a loop in our session typed code (for example a request-response loop, or a computation which may produce an arbitrary number of responses). The most obvious way of creating a recursive type in C++ (that is, defining a type in terms of itself in a typedef statement) will not work, because the language prevents such a definition. However an incompletely-defined type may be referred to in a template instantiation. This allows us to specify a three-stage protocol that may be used to define a recursive type. Firstly, an incomplete struct s is defined. Secondly, the recursive session type r is defined using a typedef. Wherever a recursive reference is required, the special instantiation call<s> is used. Thirdly, s is fully defined, with an internal typedef t that is defined to be r. An example of such a definition is shown in Figure 17.
+What we have done in the previous paragraph is establish an isorecursive type
+system [17]. As opposed to the equirecursive type system of Ninja, where a recursive type and references to the recursive type are equivalent via the (μExp) rule given
+
+in Figure 5, in our isorecursive type system we have established an isomorphism between the ‘rolled’ reference type call<s> and the ‘unrolled’ type r. The ‘unroll’ operation is carried out automatically during the computation of the continuation type of a particular session type if it is found to be of the form call<s>. In this case there is no inverse mapping from unrolled types to rolled types; we do not require one here, but it would be trivial to define one in order to make this a ‘true’ isorecursive type system.
+The primitives invoke, send, receive, newchannel and spawn are implemented, as in Ninja, as methods of the applicable classes, i.e. sessions (send, receive), channels (invoke), participants (spawn). The newchannel primitive is presented as
+a type constructor for the channel type.
+We must define types for sessions and channels themselves. We have defined a type session<S> for sessions, where S is the session type. Similarly we have channel<S> for channels.
+
+Participants
+Each participant comprises:
+a list of its channels, including information regarding whether the channel is linear, shared or invokable;
+for those channels which are linear or shared, an implementation of a communi- cation procedure for that channel;
+for those channels which are invokable, a variable which will store the channel. and provides the following functionality:
+a constructor which is provided with a sequential list of channels in the order provided by its definition;
+a spawn method which spawns the participant.
+Participants are implemented as a participant template which is parameterised over the types of its channels and the names of the relevant communication proce- dures and channel fields. This allows us to perform compile-time type checking of channels supplied to the participant.
+The spawn primitive in Ninja takes an argument indicating the ‘location’ of the
+participant. Normally this means the CPU core on which it shall run. Obviously the specification of a location is implementation-specific, but in order to allow for portable programs to be written, all implementations must provide a default loca- tion. For a particular implementation, this may mean a particular core, or it may mean that the underlying operating system should select one automatically. In any case, the default location is given in the constant os :: default location .
+A participant’s communication procedures and channel variables are encapsu- lated by making them non-static members of their own class, known as the partic- ipant implementation class. The name of this class is supplied as a parameter to participant, which will declare it as a base class. Note that we cannot have the
+
+
+struct  part base  {
+
+channel<s1> ∗ ch1 ;
+
+void  ch2 ( session<s2> s)  {
+... 
+}
+
+} ;
+
+typedef  participant<part base ,
+dual channel <s1 >, &part base : : ch1 ,
+linear channel <s2 >, &part base : : ch2
+> part ;
+
+Fig. 18. An example of a skeleton participant
+participant implementation class be a subclass of the participant instantiation. This is because it would entail that the implementation class be defined in terms of the participant class (as it is a base class). Recall that the participant class is parameterised over the implementation class’s fields and methods. So we have a circular reference, which is not possible in the C++ language. participant’s tem- plate parameters will thus comprise its base class (the implementation class) and the list of channels.
+An example of a skeleton participant is shown in Figure 18.
+
+A Note on Session Variable Types
+As previously mentioned, each session variable must be fully specified with its ses- sion type. It is unfortunate that the C++ language does not provide us with the facility of automatically deducing the session variable’s type, even though it has all the information available to do so. The most recent draft of the C++ standard [12] provides for an auto specifier for variable declarations (section 7.1.5.4) which de- duces the type of a variable from the type of its initialiser. This would be ideal for our purposes here, but since the document is still in draft, no compiler implements this feature yet, and we have to make do with what we have.
+Implementation
+Our prototype implementation of this algorithm covers stages 2 and 3 of the algo- rithm described in Section 4, with two crucial differences:
+As Ninja-C++ does not currently take into account session subtyping as described in Definition 1.4, an invoker’s communications must produce the exact same ses- sion type via our algorithm as the dual of the corresponding communication procedure for them to be compatible.
+
+It only performs a simplified version of the subset construction, and does not check the superficial subtyping property for minimised graphs.
+It is a C++ program transformation using the ROSE [19] source-to-source translator framework. The transformation takes an untyped Ninja-C++ program as input, and generates a compilable typed program as output.
+The first step in implementing the algorithm is to create an untyped version of Ninja-C++. Creating an untyped version of the language entails creating versions of the session and channel templates that do not take session type parameters. The two use cases for our type inference system are deriving intermediate session types, and deriving full session and participant information. Thus we must have two variants of our untyped implementation; for the first, only session and channel are untyped (known as the untyped sessions variant); for the second, everything is untyped (known as the untyped participants variant).
+The implementation of the algorithm is used to automatically assign types to sessions, channels and participants. It proceeds in three stages. Firstly it uses an AST traversal to collect information about the session usages, channel invocations and participant definitions that the program uses. Information about session usages is stored in a graph-like structure, a mapping between a node and a set of arcs. Each arc stores direction and type information as well as the node the arc points to. Each node stores a set of ROSE AST variable declarations which represent the session variables that correspond to the type at that node. Information about channel invocations is stored as a mapping from channel variables (AST variable declaration for the channel) to session nodes. Information about participant definitions is stored as a mapping from the template parameter representing the channel type to the session node.
+After the information has been collected, all sessions pertaining to a channel invocation (found by using the channel invocation information that has been col- lected, as well as by following the session usage graph) are ‘flipped’ and marked as dual.
+Secondly, the process of unification takes place. This proceeds in two stages, which repeat execution alternately until both stages cannot modify the graph. In the first stage, we unify identical divergent paths using the subset construction. In the second stage we unify based on recursive equality.
+
+Conclusions and Future Work
+We have shown how our type inference system allows for a program’s behaviour to be expressed as a type. We have further shown how programs can be judged to be compatible by a language’s type system using their assigned types. This allows the developer greater freedom in designing client/server programs, as the compatibility between the two peers can be checked at compile time without the developer needing to compute the program’s session type manually. We have also described a well-formedness constraint for session types with implicit choice that forbids session types for which a dual cannot be constructed.
+
+Ninja-C++ does not currently decide compatibility according to Definition 1.6; instead, two session types are deemed to be compatible only if they are the exact dual of each other. Clearly, this does not afford us much flexibility. The reason for this is that any such compatibility check, being a compile-time mechanism, must take place within the language’s facilities for compile-time computation. For C++, this means the template system. However, the C++ template system, de- spite being Turing complete [21], has insufficient expressibility for a maintainable implementation of the compatibility relation to be feasible. In order to add a dy- namic layer of expressibility to the language, a compile-time extension framework can be implemented providing computed template instantiations in a functional, or semi-functional, language such as ML or Haskell. In this instance, the extension framework can be used to build a template representing a binary relation of session subtyping as described in Definition 1.4. We can then use custom type conversion operators and the Substitution Failure Is Not An Error (SFINAE) principle to fa- cilitate substitutability and thus, by the construction of Ninja-C++, compatibility.
+Ninja-C++ supports callable procedures that perform operations over session types. In order to preserve type safety, such procedures are parameterised over the remainder of the session type using C++ templates. However, our inference system does not currently infer the session type of such procedures correctly. In order to support interprocedural session type inference, the algorithm must be extended to recognise where parameterisation is necessary (i.e. the passing of session variables between procedures) and insert the correct template syntax where required.
+Acknowledgement
+This work was supported by an EPSRC PhD studentship. The authors would like to thank Nobuko Yoshida and Sophia Drossopoulou for their valuable input.
+
+References
+Agarwal, M., K. Malik, K. M. Woley, S. S. Stone and M. Frank, Exploiting postdominance for speculative parallelization, in: High Performance Computer Architecture, 2007.
+URL http://www.gigascale.org/pubs/998.html
+Bruneton, E., T. Coupaye and J.-B. Stefani, The Fractal component model (2004).
+Collingbourne, P. C., “Verification tools for multi-core programming,” Master’s thesis, Imperial College, London, United Kingdom (2007).
+de Alfaro, L. and T. A. Henzinger, Interface automata, in: ESEC/FSE-9: Proceedings of the 8th European software engineering conference held jointly with 9th ACM SIGSOFT international symposium on Foundations of software engineering (2001), pp. 109–120.
+Dezani-Ciancaglini, M., S. Drossopoulou, E. Giachino and N. Yoshida, Bounded Session Types for Object-Oriented Languages, in: FMCO’06, LNCS (2007).
+Dezani-Ciancaglini, M., D. Mostrous, N. Yoshida and S. Drossopoulou, Session types for object-oriented languages, in: D. Thomas, editor, ECOOP’06, LNCS 4067 (2006), pp. 328–352.
+Foster, H., S. Uchitel, J. Magee and J. Kramer, Compatibility verification for web service choreography, in: ICWS ’04: Proceedings of the IEEE International Conference on Web Services (ICWS’04) (2004),
+p. 738.
+
+Gay, S. and M. Hole, Subtyping for session types in the pi calculus, Acta Inf. 42 (2005), pp. 191–225.
+Gay, S., V. T. Vasconcelos and A. Ravara, Session types for inter-process communication, TR 2003– 133, Department of Computing, University of Glasgow (2003).
+URL http://www.di.fc.ul.pt/~vv/papers/stipc.pdf
+Honda, K., Types for dyadic interaction, in: CONCUR’93, LNCS 715 (1993), pp. 509–523.
+Hunt, G., J. R. Larus, M. Abadi, M. Aiken, P. Barham, M. Fahndrich, C. Hawblitzel, O. Hodson, S. Levi,
+N. Murphy, B. Steensgaard, D. Tarditi, T. Wobber and B. D. Zill, An overview of the Singularity project, Technical report, Microsoft Research (2005).
+International Standards Organisation, Programming languages – C++ (2006-11-06).
+Lo, R., F. Chow, R. Kennedy, S.-M. Liu and P. Tu, Register promotion by sparse partial redundancy elimination of loads and stores, in: Proceedings of the ACM SIGPLAN 1998 Conference on Programming Language Design and Implementation, 1998, pp. 26–37.
+URL http://doi.acm.org/10.1145/277650.277659
+Magee, J., N. Dulay, S. Eisenbach and J. Kramer, Specifying distributed software architectures, in:
+Proceedings of the 5th European Software Engineering Conference (1995), pp. 137–153.
+Milner, R., J. Parrow and D. Walker, A calculus of mobile processes, parts I and II, Technical Report
+-86 (1989).
+URL citeseer.ist.psu.edu/milner89calculus.html
+Object Management Group, UML superstructure specification v2.1.1, Technical report (2007).
+Pierce, B. C., “Types and programming languages,” MIT Press, Cambridge, MA, USA, 2002.
+Rabbin, M. O. and D. Scott, Finite automata and their decision problems, IBM Journal of Research and Development 3 (1959), pp. 114–125.
+Schordan, M. and D. J. Quinlan, A source-to-source architecture for user-defined optimizations., in:
+L. B¨osz¨orm´enyi and P. Schojer, editors, JMLC, Lecture Notes in Computer Science 2789 (2003), pp. 214–223.
+Vallecillo, A., V. T. Vasconcelos and A. Ravara, Typing the behavior of objects and components using session types, Fundamenta Informaticæ73 (2006).
+URL  http://www.di.fc.ul.pt/~vv/papers/obj-behav.pdf
+Veldhuizen, T. L., C++ templates are Turing complete.
+URL citeseer.ist.psu.edu/581150.html
+
+Wadler, P., Linear types can change the world!, in: M. Broy and C. Jones, editors, IFIP TC 2 Working Conference on Programming Concepts and Methods, Sea of Galilee, Israel (1990), pp. 347–359.
+URL citeseer.ist.psu.edu/wadler90linear.html
+
+A  Safe Directionality
+The safe directionality property, as described in Section 1, is imposed on asyn- chronous communication models, such as Ninja, in order to preserve compatibility between peers. If both peers are in a state where both inputs and outputs are permitted, and they simultaneously send data to each other, they will both have followed different ‘paths’ through the session type thus risking that their respec- tive ‘believed’ types for the session be incompatible. In the case of bidirectionality, we sacrifice ‘path’ correctness, but maintain compatibility of the believed current session types.
+To see that the safe directionality property is correct for bidirectional types, we consider a session s1 and its communicating peer s2 such that s1 da s2. In order to derive the minimal conditions that must be imposed on s1, we must consider the most specific s2 such that s1 da s2; i.e. s2 = s1. Suppose that peer p1 of session type
+
+s1 sends a message of type t1 ∈ odom(s1) simultaneously with p2 of session type s2
+whose message is of type t2 ∈ odom(s2). Their session types are now respectively
+s' and s' , where s1 o−ut→t1 s' and s2 o−ut→t2 s' . We should now expect p1 to be able
+1	2	1	2
+to handle the message sent from p2 in its new session s' . For this to be the case,
+
+s1 ≤ s' . Similarly, s2 ≤ s' , which may be rewritten s1 ≤ s''
+⇒ s''
+≤ s1 where
+
+1	2	1	1
+s1 i−n→t2 s'' by definition 1.5 and the standard session typing result:
+
+S ≤ T ⇐⇒ T ≤ S
+
+The clearest instance of a bidirectional type that satisfies the safe directionality property is smin such that smin −a→ smin for all a ∈ {in t : t ∈ idom(smin)}∪{out t : t ∈ odom(smin)}.

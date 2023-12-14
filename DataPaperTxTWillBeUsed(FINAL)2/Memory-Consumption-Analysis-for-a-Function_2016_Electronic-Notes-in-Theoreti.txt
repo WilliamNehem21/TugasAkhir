@@ -1,0 +1,586 @@
+Available online at www.sciencedirect.com
+
+
+Electronic Notes in Theoretical Computer Science 330 (2016) 27–46
+www.elsevier.com/locate/entcs
+
+Memory Consumption Analysis for a Functional and Imperative Language
+J´er´emie Salvucci1 and Emmanuel Chailloux2
+Sorbonne Universit´es, UPMC Univ. Paris 06, UMR 7606, LIP6,
+4 Place Jussieu, F-75005 Paris, France
+
+
+Abstract
+The omnipresence of resource-constrained embedded systems makes them critical components. Program- mers have to provide strong guarantees about their runtime behavior to make them reliable. Among these, giving an upper bound of live memory at runtime is mandatory to prevent heap overflows from happening. The paper proposes a semi-automatic technique to infer the space complexity of ML-like programs with explicit region management. It aims at combining existing formalisms to obtain the space complexity of imperative and purely functional programs in a consistent framework.
+Keywords: ML, regions, static analysis, memory analysis.
+
+
+Introduction
+Deploying software in constrained environments requires strong guarantees about its runtime behavior. In memory-constrained embedded systems, dynamic allocation is often prohibited to keep execution time analyses doable and avoid heap overflows. We introduce a programming language and a resource consumption analysis to en- able dynamic allocation while providing an upper bound of live memory at compile time.
+In this paper, we propose a language `a la ML mixing purely functional and imperative features with an explicit region mechanism. To retrieve information about a program memory interactions, we rely on a static type & effect system and manual memory management through region related primitives. The type system aims at ensuring the absence of memory-related errors at compile time. To
+
+1 jeremie.salvucci@lip6.fr
+2 emmanuel.chailloux@lip6.fr
+
+http://dx.doi.org/10.1016/j.entcs.2016.12.013 1571-0661/© 2016 Published by Elsevier B.V.
+This is an open access article under the CC BY-NC-ND license (http://creativecommons.org/licenses/by-nc-nd/4.0/).
+
+perform this, programmers have to manage memory manually through a restricted set of primitives describe in section 3. The effect system helps generalize terms and discriminate between purely functional and imperative styles at the function level. The analysis relies on the correctness of the type system to consider only error- free programs with respect to memory. It combines several existing resource con- sumption analyses depending on the style inferred by the effect system. For in- stance, a function which does not allocate memory do not require analysis whereas a function which allocates memory and performs side-effects needs careful han- dling. On pure functions, we apply automatic amortized analysis [7] adapted to the region mechanism. On imperative functions, regions offer spatial information for side-effects, we use invariants on iteration spaces provided by the programmer as annotations. Both analyses return a symbolic expression characterising the space complexity of the analyzed function for each region involved in the computation.
+The composition of these symbolic expressions with a careful handling of side-effects give the program memory consumption.
+To allocate memory and to reclaim memory are orthogonal operations. Allocat- ing memory does not require information about the current state of the memory graph. Whereas, reclaiming memory requires a global view of the heap to distin- guish reachable from unreachable values. In this work, we use regions to gather enough information at compile time to prevent overpessimistic upper bounds by considering regions freed by the programmer in a sound way.
+The main goal of this paper is to introduce a framework to combine various memory consumption analyses depending on the programming style used at func- tion level to provide an upper bound of live memory at compile time considering reclaimed memory. In the remainder, related works are presented in section 2. We describe the language in section 3 with its type & effect system on which we base our analysis. Then, we show how to deal with purely functional and imperative features in sections 4, 5 as described above and section 6 composes them in a con- sistent framework. Then, we show how it works on an example in section 7. Finally, we conclude with a discussion about current limitations and further improvements.
+Related works
+Resource consumption analysis started in the late 70s with METRIC [14] targetting the best, worst and average execution times of programs written in a pure subset of Lisp. Based on recurrence relations, it can be adapted to memory consumption analysis. Contrary to time, memory can be reclaimed. Hence, new methods have emerged from both purely functional and imperative communities to obtain upper bounds on live memory.
+Sized types [9] have been applied to the core part of HUME [13], a purely functional language with an eager evaluation mechanism. It infers linear space complexities and provides an upper bound on allocated memory without requiring the user intervention.
+Automatic amortized analysis [6], based on Tarjan’s work [11], has been used in
+
+several projects. Among them, RAML [7], a pure ML language and RAJA [8], a subset of the Java language. It is able to infer polynomial bounds on live memory considering some side-effects [5] in the last version without any user annotation.
+Recurrence relations have also been employed in the COSTA [1] project target- ting the Java platform. Relying on a powerful solver, it is able to infer polynomial, logarithmic and exponential bounds on live memory thanks to a scope-based mem- ory management mechanism.
+Abstract interpretation [3] has been applied to Safe [10]. A pure first-order language equipped with an implicit region mechanism to manage memory. This technique does not restrain to particular complexity class. Unfortunately, it does not consider side-effects or higher-order functions.
+Invariants over iteration spaces have been used in the JConsume [2] project targetting the Java language. It considers side-effects through an escape mechanism. It also relies on invariants provided by external tools or the programmer to extract program space complexity. Thanks to the escape mechanism, it can provide an upper bound on live memory.
+In the following, we build on previous works to obtain an upper bound on live memory at compile time. We develop a language equipped with a type & and effect system and an explicit memory mechanism based on regions. The effect system allows us to mix automatic amortized analysis and invariants on iteration spaces depending on the programming style employed at the function level. Regions offer information about the heap state at compile time. We can then track side-effects and consider reclaimed memory to prevent inacurrate bounds.
+
+
+
+Language & Analysis
+In modern high-level languages, memory management is often performed by a garbage collector. Mainly ruled by dynamic criteria, predicting its behavior is a difficult problem. For instance, we need to know when it will be triggered and how much memory will be reclaimed.
+To circumvent this problem, we develop a statically typed language `a la ML equipped with a specific memory management mechanism: regions [12]. A region represents a set of data whose lifespan is similar. Originally developed to bring back lexical scope to heap-allocated values, they suffered memory leaks due to the stack discipline. A work about linear regions [4] shows that adding capabilities to the system makes it more general without involving such a stack discipline. A capability can be seen as a permission to operate on a region and as a witness that data within the related region are still necessary for the rest of the computations. This is a compile-time mechanism which allows us to consider reclaimed memory during resource consumption analysis (see section 6).
+
+Syntax
+From a programmer point of view, regions can be seen as a way to manage mem- ory through the use of four primitives: newrgn, @, aliasrgn and freergn. They respectively allow the programmer to allocate new regions, specify where a value is allocated, remove temporarily the linear constraint (see typing rules) and safely free regions previously allocated. Correctness of these operations is ensured by the type system at compile-time through the use of capabilities. A capability can be seen as a permission to do some actions. The grammar in figure 1 shows that each expression whose evaluation turns into heap-allocated value is annotated with @ to specify the region eρ where it is allocated at runtime. Each operation related to region-allocated values requires the associated capability of the relevant region. The type system checks that the right capability is owned. If not, this is considered as a forbidden operation and raises a type error.
+The language syntax is presented in figure 1. The rule e is annotated with the nature of the corresponding expression. Hence, eρ denotes an expression whose evaluation should produce a region handler, ec, et and ef denote respectively the condition, the consequence and the alternative of a conditional expression. The two kinds of assignment, cumulative and non-cumulative, will be discussed in section 6.
+
+Fig. 1. Expressions
+
+
+Type & effect system
+The goal of this type system is twofold: gather information about the program memory behavior to prevent bad memory management and provide a topology of
+
+
+Fig. 2. Types
+the heap available at compile-time. The typing judgement has the following shape
+C;Γ ▶ e : τ ; Γj; Cj; φ
+where C is a set of capabilities, Γ a typing environment and φ is a set of effects. It reads as follows: “given a set of capabilities C and a typing environment Γ, the expression e has type τ , returns a set of capabilities Cj and performs effects φ at runtime”.
+The effect system tracks three kinds of effects: alloc, read and write (see figure 3). They are mainly used for let generalization and the resource consumption analysis.
+
+Fig. 3. Tracked effects
+
+In the language, there are two kinds of variables. Those bound to stack values and those bound to region-allocated values. The latest is dealt with the rule for region variables, RVar. To ensure correctness, two specific rules have been added for linear and non-linear region handlers, LRHVar and RHVar. As you can see, the type (see figure 2) of this expression contains a region name r. This name is qualified with a constraint q in the environment C. This qualifier can take two different values : 1 or +. Linearity, 1, ensures that you do not share a region handler whereas + allows you to weaken the linearity constraint. This rule checks
+
+that the access to a value in region r is sound. For region allocated values, we have different rules. We need to distinguish region handlers from other values because of the linearity constraints. The role of the primitive instantiate is to replace type parameters with fresh type variables. Hence,
+hnd r = instantiate(σ)	C = Cj, r1
+
+C; Γ,x : σ ▶ x : hnd r; Γ; C; {read r}
+(LRHVar)
+
+The linear restriction on the capability r allows only one use of the hypothesis x : σ. hnd r = instantiate(σ)	C = Cj, r+
+
+
+C; Γ,x : σ ▶ x : hnd r; Γ,x : hnd r; C; {read r}
+(RHVar)
+
+When the linear restriction is weakened, its number of uses is unrestricted.
+(τ, r)= instantiate(σ)	C = Cj, rq
+
+
+
+C; Γ,x : σ ▶ x : hnd r; Γ,x : (τ, r); C; {read r}
+(RVar)
+
+In the previous rule, q means that the linearity constraint doesn’t matter.
+Typing a function requires planning for future calls. For instance, if some free variables bound to region-values are captured then the relevant set of capabilities has to be presented at each call site. To perform this verification, the arrow type is augmented with Cin and Cout respectively the set of required capabilities to eval- uate the function body and the new set of capabilities once evaluation terminates. The predicate unrestricted checks that no region handler associated with a linear capability is captured. Moreover, we need to propagate the effects performed by the evaluation of e, φe. To do this, we add a latent effect to the arrow type.
+C;Γ ▶ eρ : hnd r; Γj; Cj; φρ Cin; Γj,x : τx ▶ e : τ ; Γj; Cout; φe
+Cj = Cjj, rq	unrestricted(Cin, Γj)
+
+C;Γ ▶ fun x → e @ eρ
+Cin | Cout
+: τx −−−−−−−→
+φe
+τ ; Γj; Cj; φρ
+∪ {alloc r}
+(Fun)
+
+The application rule, APP, follows immediately the function rule. At each call site, we check that the operation is sound by checking that C entails Cin, the relevant set of capabilities to evaluate the function body. Here ≤ can be seen as a subtyping relation: Cv has to allow at least operations doable with Cin. Hence, we have r1 ≤ r+ because linearity allows you to allocate and free a region 3 . This relation extends to sets of capability.
+
+
+C;Γ ▶ e  : τ
+Cin | Cout
+τ ;Γ ; C ; φ
+
+f	x −−−−−−−→ φe
+f	f	f
+
+Cf ; Γf ▶ ev : τx; Γv; Cv; φv	Cv ≤ Cin
+
+
+C;Γ ▶ ef ev : τ ; Γv; Cv \ (Cin \ Cout) ∪ (Cout \ Cin); φf ∪ φv ∪ φe
+
+(App)
+
+
+
+3 This relation can also be read as {alloc, free}≤ {alloc}
+
+To introduce capabilities in the system, the primitive newrgn has to be used. It gives the permission to allocate, read, write values in the region. We can see that the capability is qualified with a linear property. At creation, we know that it has not been shared. This is an important criterion for reclaiming a region.
+r ∈/ C
+(New)
+C;Γ ▶ newrgn () : hnd r; Γ; C, r ; ∅
+Sometimes using a region handler several times is necessary. For instance, when you need to pass several region handlers as arguments to a function. This is the case when you use a function that copies a list in two distinct regions. To perform this, aliasrgn can help. Leaving the scope of this primitive restores the linearity property we had before.
+C, r1;Γ ▶ eρ : hnd r; Γρ; Cρ, r1; φρ Cρ, r+; Γρ ▶ e : τ ; Γj; Cj, r+; φe
+
+C, r1;Γ ▶ aliasrgn eρ in e : τ ; Γj; Cj, r1; φρ
+∪ φe
+(Alias)
+
+The most interesting rule for the analysis is Free. Here, linearity is the important part, it ensures that the region handler is not shared. Thus, the corresponding region can be freed in a sound way.
+C;Γ ▶ eρ : hnd r; Γj; Cj, r1; φρ
+
+C;Γ ▶ freergn eρ
+: unit; Γj; Cj; φρ
+(Free)
+
+
+We have a set of rules giving information about the memory behavior of our programs and providing guarantees that a well typed should not crash because of memory management. Moreover, regions give us an abstract view of the heap at compile-time. In section 6, we will see how this view can be useful to do a resource consumption analysis.
+Cost model
+To perform a resource consumption analysis, we need to model the runtime en- vironment with respect to memory usage. Programs written in our language can allocate memory with the creation of five different kinds of values: closures, pairs, lists, references and region handlers. Thus, we introduce five constants representing the amount of allocated memory for a pair, a list node, an empty list, a reference and a region handler. For closures, we introduce a specific operator because the amount of memory used is proportional to the number of free variables. We assume that compilation schemes do not introduce additional heap memory allocations.
+This allows us to manipulate symbolic expressions that will be instantiated ac- cording to the target system. Every amount of memory is a multiple of a memory word (see figure 4) which itself depends on the platform softwares are running on. The cost of a closure is represented with Ccls(n) where n is the size of the closure
+
+
+Fig. 4. Memory model
+environment. The analysis relies on this model to predict amounts of live memory.
+Analysis
+The goal of this analysis is to provide an upper bound of live memory at compile- time to prevent heap overflows. The analysis consists in a mix of several existing resource consumption analyses. It returns the amount of allocated memory in each region involved by a function call. With region sizes and the region mechanism, we are able to consider reclaimed memory.
+To analyze a program, we distinguish functions written with a purely functional style from those written with an imperative style. To do this, we rely on the language effect system. In this language, side effects happen through reference updates. Hence, if a function type is labelled with a write effect on a region r then this function is considered impure and is analyzed with the analysis based on invariants on iteration spaces. Whereas if the function only performs alloc or read effects then it is seen as pure and can be analyzed thanks to automatic amortized analysis.
+If the side-effect is performed on a local region that do not escape then from a caller point of view, this function is pure. This is a property we rely on in the section 6.
+In the next sections, we describe how each analysis works with pure and imper- ative programming styles and then we show how to compose these analyses.
+Analysis of pure functions
+Based on Tarjan’s work [11], the goal is to apply amortized analysis using the potential method without requiring the user intervention. This analysis targets the cost of a sequence of operations considering interactions between these operations. A famous example is the complexity of a sequence of operations on a functional queue. A functional queue q is implemented as a pair of lists (see figure 5). When we push an element in q, we add it in front of the first component. When we take out an element of q, two cases are considered. First, the second component is non- empty, we remove the head and return it. Second, the second component is empty,
+
+meaning either q is empty or only pushes have been performed until now, we reverse the first component in the second component. The option type used in the example is related to error handling.
+type ’a option = None | Some of ’a type ’a queue = ’a list * ’ a list let push x ( xs , ys ) = ( x :: xs , ys )
+let rec take q = match q with
+| ([] , []) -> None
+| ( xs , y :: ys ’) -> Some (y , ( xs , ys ’) )
+| ( xs , []) -> take ([] , List . rev xs )
+Fig. 5. Queues as paired lists in OCaml
+push : a → a queue → a queue
+take : a queue → (a × a queue) option
+
+As we can see, the worst case execution time of the function take is linear in the length of the first component because of the call to reverse. Hence, pushing n elements and taking them back would be a quadratic sequence of operations. This situation arises because we do not consider the state of the queue.
+The potential method introduces the notion of credit to solve this. It is rep- resented by the function Φ in the following equations where C (P ) is the program complexity and, ci and cˆi representing respectively the effective cost and the amor- tized cost of the ith operation.
+
+C (P )= Σ cˆi
+i=1
+
+cˆi = ci + Φ(Di) − Φ(Di−1)
+
+C (P )= (Σ ci)+ Φ(n) − Φ(0)
+i=1
+
+Fig. 6. The potential method
+
+In our case, the function Φ is twice the length of the first component of a queue. When we add an element to the queue we pay twice the size difference between the previous and the current state of the queue. When we start taking elements out of the queue, the call to reverse is already amortized by the accumulated credits. Hence, the worst case execution time of this sequence can be reduced to a linear complexity.
+The crux of the analysis is the Φ function. Automating the analysis requires to infer this function. To do this, it is necessary to add some restrictions. In this paper, we are only interested in linear complexities. Then, the function Φ is a linear combination of the function parameters. To find this function, we extract a set of inequalities to minimize. In what follows, the potential method is applied only to memory consumption.
+
+A resource judgement has the following shape and can be read as if there are n + Φ(Γ) memory cells available before the evaluation of e then heap overflows are prevented. At the end of the evaluation nj + Φ(τ ) memory cells are left.
+Γ,n ▶ e : τ, nj
+Types are annotated with potentials c, d and k. We remove region information for readability but assume that they are still available when needed.
+
+
+
+⟨τs⟩ ::= unit
+⟨τ⟩ ::= ⟨τs⟩
+|	⟨τa⟩ −→c
+d
+
+⟨τb⟩
+
+Fig. 7. Annotated types for automatic amortized analysis
+
+The analysis is directly adapted from earlier works on automatic amortized analysis. The main difference is the complexity computed on a per region basis to consider reclaimed memory. It is expressed as a set of syntax-directed rules describ- ing memory consumption-related constraints of each language construct. Each type is decorated with a potential annotation. For instance, List α k represents the list type where each element has a potential k. Hence, the list potential is k ×length(l). To consider region sizes, we need to adapt amortized analysis to the region mech- anism. Instead of considering every allocations, we only count allocation made in a specific region. Typing rules are applied for a specific region r. When an ex- pression contains the annotation, the corresponding amount of allocated memory counts only if it is in region r. When a function involves several regions, the analysis is performed once for each region. Hence, we obtain space complexities related to each region involved in the computations.
+
+n ≥ m
+r
+Γ,n ▶ b : Bool, m
+
+
+(AA-Bool)
+n ≥ m
+r
+Γ,n ▶ i : Int, m
+
+
+(AA-Int)
+
+
+
+n ≥ m
+r
+Γ,n ▶ x : τs,m 
+
+(AA-SVar)
+Γ(x)= (τ, r)	n ≥ m
+r	(AA-RVar)
+Γ,n ▶ x : (τ, r),m 
+
+Primitive values do not cost anything as they are allocated on the stack. Thus, their respective rules propagate constraints already known.
+
+
+Γ(ρ)= hnd r	Γ,x : τx,c ▶ e : τ, d	n ≥ m
+r
+Γ,n ▶ fun x → e @ ρ : (τx, c) → (τ, d),m 
+
+(AA-Fun)
+
+If the closure is created in the current analyzed region r , then we need to consider the closure size as the amount of allocated memory.
+
+The analysis being compositional, we cannot easily count the number of times a function is applied. This constrains us to add the following restriction: potential contains in a function closure has to be null. Thus, memory consumption can only be parameterized by the function parameters.
+Γ,n ▶ ef : (τx, nf ) → (τ, mf ), mj	Γ, mj ▶ ev : τx,m mj − nf + mf ≥ m
+
+r
+Γ,n ▶ ef ev : τ, m
+(AA-App)
+
+Function application requires enough accumulated potential to be performed.
+Γ,n ▶ ec : Bool, mj
+Γ, mj ▶ et : τ, m	Γ, mj ▶ ef : τ, m
+
+r
+Γ,n ▶ if ec then et else ef : τ, m
+(AA-Cond)
+
+Conditional expressions propagate constraints generated by expressions ec, et and ef . They are not related to region-allocated memory. To be compositional, both branches return values of the same type and potential. With the ≥ relation, this will only compute the maximum amount of allocated memory.
+Γ,n ▶ ea : τa, mj	Γ[x : τa], mj ▶ eb : τ, m
+
+r
+Γ,n ▶ let x = ea in eb : τ, m
+(AA-Let)
+
+The rule for let expressions is similar to the conditional one. It only propagates constraints to the sub-expressions.
+Γ,n ▶ ea : τa, mj	Γ, mj ▶ eb : τb, mjj
+Γ(ρ)= hnd r	mjj ≥ Ccpl + m
+
+r
+Γ,n ▶ (ea, eb) @ ρ : τa × τb,m 
+(AA-Pair)
+
+Pairs are also allocated in regions. So, if the allocation is made in the region under analysis then we have to accumulate enough credits to create this value. This is represented by this constraint mjj ≥ Ccpl + m.
+
+
+Γ,n ▶ e : τa × τb,m n ≥ m
+r
+Γ,n ▶ Πi e : τi,m 
+
+
+
+(AA-Proj)
+
+
+
+
+n ≥ m
+r	(AA-Nil)
+Γ,n ▶ Nil : List a, m
+r
+Γ,n ▶ eh : a, mj
+Γ, mj ▶ et : List a k, mjj
+Γ(ρ)= hndr
+mjj ≥ Ccons + k + m
+
+
+
+
+
+
+(AA-Cons)
+
+Γ,n ▶ Cons eh et @ ρ : List a, m
+Data constructors without arguments are represented as integers. Hence, regions are not involved in their evaluation. However, Cons takes two arguments and is
+
+therefore allocated in a region. The constraint mjj ≥ Ccons + k + m characterizes this.
+
+
+Γ,n ▶ e : List a k, mj
+Γ, mj ▶ enil : τ, m
+Γ,x : a, xs : List a k, mj + k ▶ econs : τ, m
+
+
+
+
+(AA-Match)
+
+
+
+Γ,n ▶ match e with | Nil → enil
+| Cons x xs → econs
+: τ, m
+
+The pattern matching rule is crucial. Depending on the branch taken, different assumptions about data structure sizes can be made. For instance, if the nil branch is taken then we know that the list is empty. But if the cons branch is taken then we know that the list has at list one element with its potential. This rule combined with allocation sites drive the analysis.
+
+
+n ≥ Crgn + m
+
+
+Γ,n ▶ newrgn () : τ, m
+
+(AA-New)
+
+Allocating a new region introduces a new handler to perform operations on this region. This handler is allocated in its own region and requires Crgn memory words.
+When we share a value, we need to share the potential accordingly. To care- fully track this, we need the following structural rule which basically ensures that potential is not duplicated.
+
+
+Γ,x : τx,y : τy,n ▶ e : τe,m	share(τ|τx, τy) Γ,z : τ, n ▶ e[z/x][z/y]: τe,m 
+
+(AA-Share)
+
+With this rule, the amount of potential available cannot be duplicated but is shared among different variables. For instance, List a k0 means that each list element has k0 credits. If this list is shared between variables x : List a k1 and y : List a k2 then we generate a constraint similar to k0 = k1 + k2.
+
+Example
+Here, we are looking for the sizes of the regions involved in the computation of the function duplicate (see figure 9). This function duplicates twice the list passed as an argument.
+duplicate : (List a r, hnd rc, hnd r1, hnd r2) → (List a r1 × List a r2, rc)
+Fig. 8. Type of duplicate
+
+From this type (figure 8), we can see that in the general case, the paired lists can be distributed in three distinct regions, rc, r1 and r2.
+
+let rec duplicate xs r r1 r2 = match xs with
+| Nil -> ( Nil @ r1 , Nil @ r2 ) @ r
+| Cons (x , xs ’) - >
+let ( ys , zs ) = duplicate xs ’ r r1 r2 in ( Cons (x , ys ) @ r1 , Cons (x , zs ) @ r2 ) @ r
+Fig. 9. function duplicate
+
+
+
+Duplicate clones xs twice. We can see that the list structures can reside in two different regions at most and that the pair can also be in its own region.
+First, the effect analysis marks this function with read{r} and alloc{r1, r2, rc} effects. Hence, automatic amortized analysis is employed. From previous explana- tions, the potential function will be of the form a × |xs| where a is the potential of each list element and |xs| represents the size of the list xs parameter of the function duplicate. The analysis extracts a system of constraints from the program and tries to minimize it.
+Γ, n1 ▶ (Nil, Nil): List a k1 × List a k2, m1
+Γ3, n3 ▶ duplicate xs : List a k1 × List a k2, m3
+Γ4, n4 ▶ (Cons x ys, Cons x zs): List a k3 × List a k4, m4
+Γ,n ▶ let (ys, zs)= duplicate xs in (Cons x ys, Cons x zs)
+
+
+Γ, n0 ▶ match xs with | Nil → (Nil, Nil)
+| Cons x xs → let (ys, zs)= duplicate xs
+in (Cons x ys, Cons x zs)
+This function can allocate memory in different regions (depending on how it is called). We are interested in the more general case. What size regions r, r1 and r2 will be? To do this we apply the analysis to each region. Hence, we are going to get three different sets of relations to minimize.
+Constraints related to region r1: n1 ≥ m1
+Γ4 = Γ,x : a, ys : List a k3, zs : List a k4
+n4 ≥ size(a × List a k3)+ k3 + m4
+k3 = k1, k4 = k2
+
+
+Γ= duplicate : List a q0,c → List a q1 × List a q2,d xs : List a k0
+n3 − c + d ≥ m3
+k0 = q0, k1 = q1, k2 = q2
+When we solve this set of inequalities, we get q0 = 2, q1 = 0 and q2 =0 (assuming that a list node requires two words of memory in the runtime system). Thus, we can conclude that region r1 grows of 2 × |xs|. Then, we apply the same method for rc and r2. In the end, we get three symbolic expressions characterizing the size of each region where allocations are performed.
+Analysis of imperative functions
+Programs written with an imperative style perform side-effects through the use of references. To consider them, we need to use a different method: invariants on iteration spaces. We rely on recent work done in the JConsume project [2] targeting Java programs at the bytecode level.
+Analysis
+We adapt this analysis to programs written in our language. We still rely on the user to provide invariants. They can be expressed using all classic arithmetical and logical operators. These can be directly provided by her or obtained through the use of external tools. They are written with the with syntax as in
+fun x y - > x + y with x < y
+Fig. 10. With syntax
+Contrary to the original work, here we do not care about the notion of escape memory as it is already handled through the use of regions. As in the automatic amortized analysis, we are looking for the sizes of the different regions involved in the computations. To perform this, invariants characterize the number of iterations. Here, invariants are linear relations but the user could provide other classes as well. The advantage of linear invariants comes when we try to infer them.
+Example
+If we take an imperative version of the previous example, we obtain
+The invariants we are interested in characterize size relations of data structures involved (see figure 12). Amounts of memory allocated in r1 and r2 are extracted from them. They are related to the length of the list xs. Expected invariants are in figure 12. The function length represents the projection of the list structure into the integer domain.
+As side-effects are performed through references, we need to also keep track of the amount of memory available through references. Here, we notice that reference
+
+let duplicate xs rc r1 r2 = let r = newrgn () in
+let ys = ref Nil @ r in
+let zs = ref Nil @ r in let rec loop es =
+match es with
+| Nil -> ()
+| Cons (e , es ’) - >
+ys += Cons (e , ! ys ) @ r1 ; zs += Cons (e , ! zs ) @ r2 ; loop es ’
+in loop xs ; (! ys , ! zs ) @ rc ;
+Fig. 11. function duplicate
+
+Fig. 12. Invariants for duplicate
+assignments are cumulative, meaning that data is added to previous data reachable through the reference. Hence, to determine the amount of memory reachable from them, we rely on the same invariants. In the end, we dereference ys and zs, so we propagate the amounts of memory reachable through these references.
+From these, we obtain symbolic expressions characterizing the amounts of al- located memory in different regions. From the outside, this function is seen as pure.
+
+Fig. 13. Amounts of memory
+
+
+Composition of analyses
+Previous analyses are concerned with space-complexity but a program mixing both purely functional and imperative features involves composition. Results provided by previous analyses do not track side-effects. This lack prevents propagation of size relations to make a sound analysis.
+To track side-effects, it is necessary to manage references with some accuracy. For instance, if a reference is updated then we need to propagate new size informa- tion about the value being dereferenced to pursue the analysis. Unfortunately, space complexities are not directly related to the sizes of the data structures involved. The
+
+append function is linear in term of the first argument but the returned list length is the sum of both argument lengths.
+References require careful handling. For instance, a reference update may imply a size change. This new size has to be propagated to the rest of the program. To do this, we annotate each reference with a unique identifier. A reference is annotated with the region it lives in and the region referenced data lives in. To track effects, we refine the write effect with the label of the updated reference.
+If the programmer employs the region mechanism with a fine granularity, it is possible to derive data structure sizes from space complexity. The function append is a good illustration of this principle. Its type shows that the two lists can reside in two different regions and that the resulting list lives in the same region than the second argument. The combination of the base case and the effect alloc r2 entails that data is added to the second list. Thanks to this, we can deduce that the size of the resulting list is the sum of lists passed as arguments.
+When size relations cannot be extracted automatically, the programmer has to provide them manually with the with syntax just like for the imperative analysis to run the analysis. Annotations can be provided through the use of classic arithmeti- cal operators and the size operator. This size operator is a way to count the number of node of a data structure. Variables bound to integers can be used directly to refer to the integer itself.
+To perform the composition, we assume the whole program available. The com- position follows the control flow graph of the program. It is expressed as a set of rules whose shape is
+C ; σ; φ ▶ e : σj; φj
+where σ and φ represents respectively the sizes of regions allocated and amounts of memory reachable through each references visible in the current scope, e an expression of the language.
+
+
+
+
+C ; σ; φ ▶ n : σ; φ
+(CSP-Int)
+
+
+C ; σ; φ ▶ b : σ; φ
+(CSP-Bool)
+
+As in the previous analyses, primitives values are not allocated in regions. Hence, neither σ nor φ is modified.
+
+
+
+
+C ; σ; φ ▶ x : σ; φ
+(CSP-SVar)
+
+
+C ; σ; φ ▶ x : σ; φ
+(CSP-RVar)
+
+Using a variable does not affect regions.
+σj = update(σ, Ccls(fv(e) \ {x})+ 1, ρ)
+
+
+C ; σ; φ ▶ fun x → e @ ρ : σj; φ
+
+
+
+
+(CSP-Fun)
+
+Thanks to previous analyses, we already know the space-complexity of functions used by the program. The only thing we care about here is the size of the closure itself. One word for the code pointer and the rest for the closure environment. Here, the function update adds Ccls(fv(e) \ {x}) + 1 memory words to the region represented by ρ.
+
+
+C ; σ; φ ▶ ea : σa; φa	C ; σa; φa ▶ eb : σb; φb σj; φj = instantiate(C (ea), size(eb))
+
+C ; σ; φ ▶ ea eb : σj; φj
+(CSP-App)
+
+Composition really happens at call sites with the function instantiate. This is where symbolic expressions are merged and side-effects propagated.
+C ; σ; φ ▶ ec : σc; φc
+C ; σ; φ ▶ et : σt; φt	C ; σ; φ ▶ ef : σf ; φf σj; φj = max(σt, σf ), max(φt, φf )
+
+C ; σ; φ ▶ if ec
+then et
+else ef
+: σj; φj
+(CSP-Cond)
+
+Conditional expressions introduce the use of the operator max. To keep the analysis sound, we need to consider the worst case. Here, it means the maximum of memory allocated in a region and the maximum amount of memory reachable from a reference.
+C ; σ; φ ▶ ea : σa; φa	σa; φa ▶ eb : σj; φj
+
+C ; σ; φ ▶ let x = ea
+in eb
+: σj; φj
+(CSP-Let)
+
+
+
+
+(CSP-Nil)
+C ; σ; φ ▶ Nil : σ; φ
+C ; σ; φ ▶ eh : σh; φh
+C ; σh; φh ▶ et : σt; φt σj = update(σ, Ccons, ρ)
+
+C ; σ; φ ▶ Cons eh et
+@ ρ : σj; φt
+(CSP-Cons)
+
+
+
+C ; σ; φ ▶ e : σe; φe
+C ; σe; φe ▶ enil : σnil; φnil	C ; σe; φe ▶ econs : σcons; φcons σj; φj = max(σnil, σcons), max(φnil, φcons)
+
+
+
+
+
+
+(CSP-Match)
+
+
+
+C ; σ; φ ▶ match e with | Nil → enil
+| Cons x xs → econs
+: σj; φj
+
+
+C ; σ; φ ▶ e : σe; φe
+φj = add(φe, l, size(e))
+
+
+C ; σ; φ ▶ refl e : σj; φj
+(CSP-Ref)
+
+When a reference is created, we need the corresponding amount of memory. The interesting thing about references appears when assignments are made. We have to update the amount of memory reachable by the corresponding reference. This is what the function update performs on φ. This update depends on the nature of the assignment. If cumulative then we add a few memory words to the already available amount. If non-cumulative, then we introduce a max operator to keep the maximum amount of reachable memory.
+
+
+C ; σ; φ ▶ ef : σr; φr	C ; σr; φr ▶ ev : σv; φv φj = update(φv, label(er), size(ev))
+
+C ; σ; φ ▶ er := ev : σj; φj
+(CSP-Assign)
+
+To allocate a new region, you need to have at least the amount of memory necessary to store a region handler.
+σj = update(σ, Crgn, ρ)
+(CSP-New)
+C ; σ; φ ▶ newrgn () : σ ; φ
+
+
+record(σ)
+σj = free(σ, ρ)	φj = clean(φ, ρ)
+
+
+C ; σ; φ ▶ freergn ρ : σj; φj
+
+
+(CSP-Free)
+
+The type system checks that the region corresponding to ρ can be reclaimed in a safe way. Hence, we can ignore the size of this region to compute an upper bound of live memory. As we are freeing memory, there is a local maximum. We need to save the sum of region sizes to track the maximum amount of live memory. At the end of the analysis, we take the maximum between each local maximum. We do not need to consider the amount of memory available at the end of the execution because the typing discipline checks that no region remains unclaimed.
+
+Example
+The following example shows how the analysis is performed. The main function is revappend which concatenates two lists by reversing the first one to be tail recursive. This function can be written in at least two different styles: purely functional and imperative.
+This program builds two regions, r and rr, and allocates two lists, xs and ys, in r and rr respectively. Then, it concatenates xs and ys thanks to revappend and reclaims the region rr.
+
+let r = newrgn () in
+let ys = [12; 15; 18] @ r in let rr = newrgn () in
+let xs = [3; 6; 9] @ rr in
+let zs = rev_append xs ys r in freergn rr
+
+
+The left version employs a purely functional style and the right version an im- perative one with the side-effect on the reference rs along the computation. The effect system captures this difference and allows different analyses to be performed and combined.
+
+
+As you can see here, each region contains the structure of the list. The type of the revappend function gives us information about its memory allocation behavior.
+
+rev  append : (α list, ra) → (α list, rb) → hnd rb → (α list, rb)
+The first list can be allocated in a region ra, the second in a region rb but in the end the returned list will be allocated in region rb. This information is useful to track the different lifespans of the regions involved in the computations.
+Pure functions are analyzed with the automatic amortized analysis. It extracts a set of constraints of the function and tries to minimize it. In revappend, the inter- esting part is the application of the data constructor Cons. If before this application, the amount of memory available is n, then the constraint n ≤ CCons + nj, where nj is the amount of memory available after, needs to be satisfied. CCons represents the amount of memory necessary to allocate an element of a list. In this case, the extracted cost is proportional to the size of the first list. Here, rev  append behaves like the function append. This allows us to infer size relations. Pure functions do not act on the program state, hence there is no information related to side-effects to propagate.
+The imperative version of revappend is analyzed thanks to invariants on it- eration spaces. Here, the side-effect is local to the function. Hence, the amount of allocated memory is the only information propagated. Here, the invariant is length !rs = size xs + size ys where size ys is a constant. It is linear and could be obtained in an automatic way. In other cases, we would rely on programmer annotations. From this, we can deduce the amount of allocated memory. In this case, it is also proportional to the length of the first list.
+In this example, both analyses return similar results. Then, we can instantiate symbolic expressions to get the amount of memory necessary to execute the program in a safe way. Here, we can see that the region rr is freed at the end. If the program would be larger, this region would have been considered as non-existent to analyze the rest of the memory allocated.
+
+Conclusion
+Providing an upper bound at compile-time on the amount of live memory at run- time would allow the introduction of high-level languages in the embedded system communities. This paper proposes to conceive a language and an analysis to move towards this end.
+
+We present a language `a la ML mixing pure and imperative features with an explicit region mechanism. Memory management is performed by the programmer through a set of primitives and checked at compile time. This mechanism provides information about the heap topology and lifespans of allocated values.
+The analysis relies mainly on an effect system and a region mechanism. The effect system allows us to combine several analyses depending on the programming style employed by the programmer. Regions offer lifespans of allocated values. This prevents overpessimistic bounds because we can consider reclaimed regions at compile time. Automatic amortized analysis is used on pure functions and invariants on iteration spaces are employed on imperative functions.
+Correctness of this analysis relies on the correctness of the type system which has been proved through progress and preservation lemmas which haven’t been presented in this paper but proofs are similar to [4]. To validate this approach in practice, a prototype is currently being developed.
+
+References
+Albert, E., P. Arenas, S. Genaim and G. Puebla, Closed-Form Upper Bounds in Static Cost Analysis,
+J. Autom. Reasoning 46 (2011), pp. 161–203.
+Braberman, V. A., D. Garbervetsky, S. Hym and S. Yovine, Summary-based inference of quantitative bounds of live heap objects, Sci. Comput. Program. 92 (2014), pp. 56–84.
+Cousot, P. and R. Cousot, Abstract interpretation: a unified lattice model for static analysis of programs by construction or approximation of fixpoints, in: Conference Record of the Fourth Annual Symposium on Principles of Programming Languages, POPL 77 (1977), pp. 238–252.
+Fluet, M., G. Morrisett and A. J. Ahmed, Linear Regions Are All You Need, in: Proceedings of the 15th European Symposium on Programming, ESOP 06, 2006, pp. 7–21.
+Hoffmann, J., A. Dash and S.-C. Weng, Towards automatic resource bound analysis for ocaml (2015).
+URL http://www.cs.cmu.edu/~janh/papers/HoffmannW15.pdf
+Hofmann, M. and S. Jost, Static Prediction of Heap Space Usage for First-order Functional Programs, in: Proceedings of the 30th Symposium on Principles of Programming Languages, POPL ’03 (2003),
+pp. 185–197.
+Hofmann, M. and S. Jost, Type-Based Amortised Heap-Space Analysis, in: Proceedings of the 15th European Symposium on Programming, ESOP 06, 2006, pp. 22–37.
+Hofmann, M. and D. Rodriguez, Automatic Type Inference for Amortised Heap-Space Analysis, in:
+Proceedings of the 22sn European Symposium on Programming, ESOP 13, 2013, pp. 593–613.
+Hughes, J., L. Pareto and A. Sabry, Proving the Correctness of Reactive Systems Using Sized Types, in: Proceedings of the 23rd Symposium on Principles of Programming Languages, POPL 96 (1996),
+pp. 410–423.
+Montenegro, M., R. Pen˜a and C. Segura, “Foundational and Practical Aspects of Resource Analysis: First International Workshop, FOPARA 2009, Eindhoven, The Netherlands, November 6, 2009, Revised Selected Papers,” Springer Berlin Heidelberg, Berlin, Heidelberg, 2010 pp. 34–50.
+Tarjan, R. E., Amortized computational complexity, SIAM Journal on Algebraic and Discrete Methods
+6 (1985), pp. 306–318.
+Tofte, M. and J.-P. Talpin, Implementation of the Typed Call-by-value λ–calculus using a Stack of Regions, in: Proceedings of the 21st Symposium on Principles of Programming Languages, POPL 94, 1994, pp. 188–201.
+Vasconcelos, P., “Space Cost Analysis Using Sized Types,” Ph.D. thesis, University of St Andrews (2008).
+Wegbreit, B., Mechanical Program Analysis, Commun. ACM 18 (1975), pp. 528–539.

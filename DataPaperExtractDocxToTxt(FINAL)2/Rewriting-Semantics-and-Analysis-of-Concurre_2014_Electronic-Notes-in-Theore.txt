@@ -1,0 +1,736 @@
+Available online at www.sciencedirect.com
+
+
+Electronic Notes in Theoretical Computer Science 304 (2014) 167–182
+www.elsevier.com/locate/entcs
+
+Rewriting Semantics and Analysis of Concurrency Features for a C-like Language
+Traian Florin S, erbănut, ă1,2
+Department of Computer Science University of Bucharest
+
+Abstract
+This paper shows how one can easily transform K definitions of programming languages into runtime verification tools. To increase the confidence that these runtime verification tools can be used for testing real- world programs, the paper uses KernelC, a subset of the C programming language containing functions, memory allocation, pointer arithmetic, and input/output, which can be used to execute and test real C programs. KernelC is extended with threads and synchronization constructs, and two concurrent semantics are derived from its sequential semantics. The first semantics, defining a sequentially consistent memory model, can be easily transformed into a runtime verification tool for checking datarace and deadlock freeness. The second semantics defines in a relatively minimal fashion a relaxed memory model based on the x86-TSO memory model. By exploring the executions of an implementation of Peterson’s mutual exclusion algorithm for both definitions, it is shown that the algorithm guarantees mutual exclusion for the sequentially consistent model, but cannot guarantee it for the relaxed model, but also that by allowing fence operations in the language, the algorithm can be fixed and proven correct for the TSO model, too.
+Keywords: Runtime verification, tools, datarace, deadlock, Peterson’s mutual exclusion algoriithm
+
+
+Introduction
+This paper offers a glimpse on the process of using formal definitions of programming languages as testing and analysis tools. We argue here that K [21,22] definitions can be used to test and analyze executions of programs written in real-life languages either directly or by extending them to become runtime analysis tools.
+The rewriting logic representation of K definitions gives them access to the arse- nal of generic tools for rewriting logic available through the Maude rewrite engine [5]: state space exploration, LTL model checking, inductive theorem proving, and so on. This collection of analysis tools is by itself enough to provide more information about the behaviors of a program than one would get by simply testing the program using an interpreter or a compiler for that language. Nevertheless, the effort of defining
+
+1 This work was supported by Contract 161/15.06.2010, SMISCSNR 602-12516 (DAK).
+2 Email: traian.serbanuta@fmi.unibuc.ro
+
+http://dx.doi.org/10.1016/j.entcs.2014.05.009
+1571-0661/© 2014 Elsevier B.V. All rights reserved.
+
+the semantics pays back in more than just one way: by relatively few alterations to the definition, one can use the same generic tools to obtain type checkers and type inferencers [9], static policy checking tools [13,14], runtime verification tools [20], and even Hoare-like program verification tools [19].
+
+Contributions
+In this paper we focus on analyzing concurrency aspects of programming lan- guages using the K framework and show that runtime verification tools for dataraces and deadlocks can easily be obtained by slightly adjusting the definition of a lan- guage. To stress the “real-life” aspect, we choose as our running example a subset of the C programming language, named KernelC, and use these extensions to find and fix concurrent problems in KernelC programs.
+Moreover, we show how one can obtain an x86-TSO-like [15] relaxed memory model for KernelC with minimal effort and use it to test the differences between various memory consistency models by exploring the possible behaviors of program executions under both models. Being able to analyze the behavior of concurrent programs under various memory consistency models is very important both in the early stages of language design, when one can decide how to enforce memory consis- tency, but also once a language is already in use, at it allows detecting and solving problems in programs written in that language.
+This paper only provides a proof of concept that one can derive such tools directly from the language definition; however, we see no major impediment for building more efficient tools based on the same ideas.
+To contain the size of the paper, we assume the user is already familiar with the K framework [22,21], including writing, executing, and exploring K definitions using the K tool [23].
+The remainder of this paper is organized as follows. Section 2 presents the syntax of KernelC. Section 3 presents the complete semantics for its purely sequential constructs and a simple sequentially consistent semantics for the concurrent part. Section 4 shows how KernelC can be used to explore behaviors of programs and can be adjusted for checking whether the executions of a program are datarace and deadlock free. Section 5 defines an alternative semantics for memory accesses and concurrency constructs based on a relaxed memory model inspired from the x86- TSO memory model [15] and shows that the differences between this model and the sequential consistent one can be tested using the available tools. Section 6 concludes.
+
+Related Work
+In addition to the ideas described in this paper, KernelC has already been used to show how one can easily obtain a runtime verification tool for strong memory safety [20] directly from the semantics, or integrated into a rewriting-based pro- gram verification tool [18] based on matching logic, a new verification logic based on K [19]. While in this paper we use KernelC, the results that we present have been adapted and applied to a comprehensive K definition of the C language [8,7].
+
+Due to the complexity of reasoning under relaxed memory models and the assump- tion most programmers do about the executions being sequentially consistent, there have been many recent research efforts of detecting non-sequentially-consistent ex- ecutions [16,1,2,3,11,12,4]. Our approach is different from the others in the sense that it is based on the formal definition of the language being analyzed and directly derived from it. Although still in an incipient phase, it shows that rewriting-based definitions can be used to obtain tools for programming languages.
+
+KernelC  Syntax
+Exp ::= #Int | #Id | DeclId | PointerId
+| Exp + Exp [strict] | Exp - Exp [strict]
+| Exp == Exp [strict] | Exp <= Exp [strict]
+| ! Exp | Exp && Exp | Exp ? Exp : Exp
+| (int*)malloc(Exp *sizeof(int)) [strict] | * Exp
+| Exp [ Exp ]
+| Exp = Exp [strict(2)]
+| #Id ( Exps ) [strict(2)]
+| printf("%d;", Exp ) [strict]
+Stmt ::= {} | { StmtList }
+
+| Exp ; [strict]
+| if( Exp ) Stmt
+| if( Exp ) Stmt else Stmt [strict(1)]
+| while( Exp ) Stmt
+| DeclId DeclIds { StmtList }
+| return Exp ; [strict]
+StmtList ::= Stmt | StmtList StmtList Pgm ::= StmtList
+DeclId ::= int Exp | void PointerId PointerId ::= #Id | * PointerId [strict] #Id ::= main
+
+Fig. 1. Syntax of KernelC— the sequential fragment
+
+Fig. 1 describes the syntax of the sequential fragment of
+
+
+KernelC
+
+
+using a
+
+BNF-like notation. The syntax has been kept as close to the C syntax as possible to allow a reasonably large class of C programs to be parsed and executed with the KernelC definition. Nevertheless, the syntax is quite small, covering only 33
+constructs of the C language.  Function declarations consist of a DeclId, that is,
+a typed identifier, followed by a list of DeclIds (which should be surrounded by parentheses, although not required), and then by the body of the function. The statements allowed by KernelC are pretty simple, from the expression statement, to the block, conditional, and loop statements.
+
+Extending the syntax with threads
+The basic syntax of KernelC is extended with a couple of multi-threading prim- itives like thread creation, lock-synchronization, and thread-join. To keep things simple, we adopt a very restricted set of synchronization primitives and a syntax which, while not resembling the syntax proposed in the new C standard, it is much easier to work with in our model.
+
+
+Exp ::= spawn Exp | join( Exp ) [strict]
+| acquire( Exp ) [strict] | release( Exp ) [strict]
+We chose for the thread creation statement “spawn” to take as its only argument an expression which is supposed to be the call of a function. The intuition is that the arguments of the function are to be evaluated in the current thread, while the function call is executed in a newly spawned thread. “spawn” returns an identifier for the newly created thread which can be used by join to force the calling thread to wait for the specified thread to end before continuing. “ acquire” and “ release ” can acquire and release any value; however, in our examples only memory locations are used as locks.
+
+
+Basic KernelC Semantics
+A K definition describes the execution model of a programming language by making explicit the structure of the configuration of the execution state and by providing a set of rules specifying how the execution state will be altered during the execution of a program.
+The structure of the configuration for the sequential fragment of KernelC is pretty plain. At the top level we have two cells, T for the state of a running program, and result for a completed program. The T cell contains a computation cell k, an environment cell env mapping (local) variables to values, a funs cell mapping names of functions to their definitions, a function stack cell fstack for saving the control context upon calling a function, an output cell out, a memory cell mem mapping location (represented as naturals) to values (integers), a ptr cell for maintaining information about memory blocks allocation sizes, and a counter cell next for gen- erating fresh locations and integers. A result cell, parallel to the T cell is used to allow a more concise result to be output to the user once the computation completes successfully. Hence, the T and result cells are meant to be mutually exclusive; the “?” symbol attached to their names specifies that any of them can miss from a running configuration.
+configuration:
+
+*	D ·K k D ·Map env D ·Map funs
+D “” 
+
+D ·List 
+
+
+fstack
+D “” 
+
+
+out
+D ·Map 
+
+
+mem
+D ·Map 
+
+
+ptr
+D 0 
+
+
+next  T?
+result?
+
+One important design choice is that we have decided to clearly distinguish be- tween the heap allocated memory which is kept in the ⟨⟩mem cell and the local variables memory which is kept in the ⟨⟩env cell as a direct map from variables to values. Due to this choice, it is impossible to obtain the address of a variable, and this is enforced by the non-existence of the reference operator in KernelC. Another simplifying design decision was to not deal with scoping. The semantic rules pre- sented below assume that once a variable is declared, it is visible for the remainder of the enclosing function execution, and therefore there should not be duplicated declarations of the same variable during the execution of the function.
+
+Instead of presenting the entire semantics, which is pretty standard for the se- quential fragment, we will only focus on rules related to memory access and function call.
+Local Variables.  Newly declared variables are mapped in the environment to the
+special undef computation constant which is not a value and thus it cannot be read.
+
+
+context
+int _ = 
+rule
+⟨int X ···⟩k ⟨	Env
+
+⟩env
+
+void	Env [ undef / X ]
+K contexts specify evaluation strategies, ensuring that certain arguments of a con- struct are evaluated (by pushing them on the execution stack) before giving the execution rule for the construct itself. The K rule for declaring a variable is almost self-explanatory:  if the declaration of X is at the top of the execution
+stack represented by the ⟨⟩k cell, then replace it by void and set the value of X
+to undefined in the environment. The ellipses to the right of the ⟨⟩k cell show that there could be more things to execute after this declaration; however, this is the first. This rule also shows that transformations in K are specified locally, by underlining the part to be replaced and writing its replacement underneath the line.
+Local variables in KernelC are restricted. They cannot be shared, cannot be addressed, and therefore reside in a separate space called the environment.
+
+rule
+⟨ X
+···⟩k ⟨··· X '→ V ···⟩env
+rule
+⟨X = V ···⟩k ⟨··· X '→ _
+
+···⟩env
+
+V	V	V
+Heap allocation and dereferencing. The rules below define a very simple memory allocation mechanism, which basically allocates memory in order, starting with the location following the last allocated location.
+rule
+⎛ ⟨(int*)malloc( N *sizeof(int)) ···⟩k ⟨···	·Map	···⟩ptr ⎞
+
+
+⎜⎜⎝
+N ′
+⟨	Map
+N ′ .. N +Nat N ′ '→ undef
+N ′ '→ N
+···⟩mem ⟨	N ′
+N +Int N ′
+
+⟩next
+⎟⎟⎠
+
+The rules below specify atomic access to heap memory (ensuring a sequentially consistent semantics), for both read and write operations.
+context
+*  = _
+rule deref	rule update
+
+⟨ * N
+···⟩k ⟨··· N '→ V ···⟩mem
+⟨* N = V ···⟩k ⟨··· N '→ _
+···⟩mem
+
+V
+[transition]
+V	V
+[transition]
+
+We use the transition tag for the rules expressing the semantics for the mem- ory operations to instruct the K tool that the order of their interaction should be considered in the transition graph of an execution.
+User-declared Functions.  Upon meeting a function declaration, the function is
+simply saved in the map of functions.
+rule
+
+⟨int F Xl { Sts } ···⟩k ⟨	Map
+···⟩funs
+
+·K	F '→ int F Xl { Sts }
+Moreover, we desugar void functions into integer functions returning the special value void to avoid special casing the latter.
+
+rule
+void F
+int F
+Xl {	Sts	}
+Sts return void ;
+
+When calling a function, a triple is pushed on the function stack, consisting of the name of the function, the current environment and the remainder of the computation. Then the current computation is replaced by the body of the function, the environment by the mapping of the arguments to their passed values. When returning, the environment and computation are restored with the function call being replaced by the return value.
+The reason for pushing the name of the function on the function stack is that this effectively exposes the call stack for analysis purposes.
+rule
+
+⟨	F ( Vl ) a K
+
+bindTo( Xl , Vl ) a Sts
+⎜
+⟩k ⟨Env⟩env	⎞
+⎟
+
+⎝ ⟨··· F '→
+
+
+rule
+int F Xl { Sts } ···⟩funs ⟨	·List
+F # Env # K
+···⟩fstack ⎠
+
+⟨return V ; a _⟩k ⟨ _ ⟩env ⟨_ # Env # K ···⟩fstack
+
+V a K
+rule
+Env
+·K
+rule
+
+⟨bindTo(,) ···⟩k
+⟨bindTo( X , Xl , V , Vl ) ···⟩k ⟨	Env
+⟩env
+
+·K	bindTo( Xl , Vl )	Env [ V / X ]
+Output. The output is simply appended to the ⟨⟩out cell.
+rule print
+⟨printf("%d;", I ) ···⟩k ⟨	⟩out
+
+void
+[transition]
+I “;”
+
+
+
+A Sequentially Consistent Semantics for KernelC threads
+For executing multithreaded programs, the configuration must be updated to group computation, local variables and call stack in a thread cell, which is identified by an id. Multiple threads are grouped in a threads cell. Additionally, the ids of all completed threads are gathered in the cthreads cell.
+
+
+configuration:
+*	·K k	·Map env	·List fstack	0 id
+D ·Map	D
+
+
+
+funs
+out
+mem
+ptr
+next
+cthreads	T?
+
+
+Note that, although the configuration changed, existing rules do not need to be changed, as the change was only a structural one. Given a configuration, the K tool uses its structure to concretize the rules and make them executable.
+The semantics of spawn is the one mentioned in the thread syntax. We first have a context for evaluating the arguments of the function call (without calling the function), then we delegate the function call to a new thread.
+context
+spawn _ (  )
+
+rule
+⟨spawn X ( Vl ) ···⟩k ⟨	T
+
+⟩next	·Bag
+
+T
+[transition]
+T +Int 1
+⟨··· ⟨X ( Vl )⟩k ⟨T⟩id ···⟩thread
+
+A lock can be acquired if not already acquired by any thread. Note that we don’t model here re-entrant locks.
+rule
+
+⎛⎜ ⟨acquire( N ) ···⟩k ⟨T⟩id ⟨Locks	·Map
+⟩locks ⎞⎟
+
+⎝
+
+
+
+rule
+void
+
+[transition]
+N '→ T
+when ¬Bool N in keys Locks
+
+⟨release( N ) ···⟩k ⟨T⟩id ⟨··· N '→ T ···⟩locks
+
+
+void
+[transition]
+·Map
+
+Upon completion, a thread registers its id in the set of completed threads, which is used as a signal to join.
+rule
+
+⟨··· ⟨V ⟩k ⟨·List ⟩fstack ⟨T⟩id ···⟩thread
+·Bag
+⟨	Set
+T
+···⟩cthreads
+
+rule
+⟨join( T ) ···⟩k ⟨··· T ···⟩cthreads
+0
+
+Runtime Verification of Concurrent Programs
+The definition above proposes a simple sequentially consistent semantics for our KernelC concurrent constructs. We will show here how this definition can be directly used as a tool for analyzing and observing program executions, but also how it can be developed further by defining an simple extension which allows checking program executions for datarace freeness.
+The following Banking example is a C implementation of a Java class exhibiting
+a concurrent bug pattern [10]. The class attempts to define an account and some basic operations on it: creation, deposit, balance, withdraw, and transfer to another account. Figure 2 presents our C implementation of it, which encodes the objects as locations holding the amount of money available and the methods of the class as functions taking the receiver object’s location as their first argument. Additionally, similarly to Java, we model the synchronized attribute of the methods by locking on the location of the receiver object at the beginning of the function and unlocking it before the return.
+The simplest way to check a program’s behavior is to run it and observe the result of one possible execution. We can do so using the krun command:
+$ krun pAccount.c 100;20;300;220;
+
+The output is the expected one, with both balances increased by 200, as it would probably happen in a normal execution. However, if we search for all possible outcomes of the execution using krun,
+$ krun pAccount.c −−search
+Search results :
+
+
+
+int ∗newAccount(int m) {
+int ∗a=(int ∗)malloc(1∗sizeof(int));
+∗a=m;
+return a;
+}
+void deposit(int ∗a, int m) {
+acquire(a);
+∗a=∗a+m;
+release(a);
+}
+int balance(int ∗a) {
+acquire(a); int b=∗a; release(a); return b;
+void withdraw(int ∗a, int m) {
+acquire(a);
+if (m <= ∗a) {
+∗a=∗a−m;
+}
+release(a);
+}
+void transfer(int ∗a, int ∗b, int m) {
+acquire(a);
+if (m <= ∗a) {
+∗a=∗a−m;
+∗b=∗b+m;
+}
+release(a);
+}
+
+}
+
+
+
+void run(int ∗a, int ∗b) { deposit(a,300); withdraw(a,100); transfer (a,b,100);
+}
+int main() {
+int ∗a = newAccount(100); int ∗b = newAccount(20); printf ("%d;", balance(a));
+printf ("%d;", balance(b)); int t1 = spawn(run(a, b)); int t2 = spawn(run(b, a)); join(t1 ); join(t2 );
+printf ("%d;", balance(a));
+printf ("%d;", balance(b));
+return 0;
+
+}
+
+Fig. 2. pAccount.c: The Account “class” and a concurrent test driver for it.
+
+
+Solution 1, state 626:
+⟨ result ⟩
+"100;20;200;20;"
+⟨/ result ⟩
+Solution 2, state 665:
+⟨ result ⟩
+"100;20;300;220;"
+⟨/ result ⟩
+
+
+.....
+Solution 11, state 674:
+⟨ result ⟩
+"100;20;100;220;"
+⟨/ result ⟩
+
+we notice 10 additional, perhaps unexpected, solutions. We can guess it must be due to a datarace, but to locate it we need more powerful tools.
+
+Searching for Dataraces
+Let us illustrate below how one can detect dataraces, attempt to fix them, and then re-check the program for dataraces.
+We adopt a straight-forward definition of dataraces: a datarace can be observed iff during the execution of the program there is a moment in which two threads can take as the next execution step transitions which access the same memory location, and at least one of the two accesses is attempting to update the location.
+
+Although we could express this property as an assertion on states and then use Maude’s model checker to check whether every possible execution of the program (for a given input) is datarace free, we here take a simpler approach by defining the race condition within K and then directly using the exploration capabilities provided through krun, the K tool for exploring program executions [23], to search for a datarace. If one is found, a configuration exhibiting the race is produced; if not, as the krun tool explores all possible interleavings due to scheduling, then the program is effectively proven datarace free (for the given input). To do that, we add two new cells as alternatives to existing cells, ⟨⟩race as an alternative to the ⟨⟩k cell and ⟨⟩raceDetected as an alternative to the top cell ⟨⟩T, together with two rules capturing the write-write, and write-read dataraces, respectively:
+rule
+
+<  k
+race
+rule
+> * N = _ ...</  k
+race
+> <  k
+race
+> * N = _ ...</  k  >
+race
+
+<  k
+race
+> * N = _ ...</  k
+race
+> <  k
+race
+> * N ...</  k  >
+race
+
+These two rules ensure that any further computation is stopped for the two threads identified to be in a race, and ease their recognition in the configuration exhibiting the race. Note that these rules are actually renaming the computation cell, by rewriting its name (k) into race, without altering its contents.
+In addition to that, we add another rule which changes the top computation itself once a race is detected, so we can easily identify an entire configuration exhibiting a race.
+rule
+<		T	>... ⟨K ⟩race ...</		T	> raceDetected		raceDetected
+A simple execution of the program under the new definition gives the same output as before. However, when searching for all configurations having ⟨⟩raceDetected at the top, we obtain 16 race candidates, the first being the following:
+$ krun pAccount.c −−search −−xsearch−pattern=' =>∗ ⟨raceDetected ⟩B:Bag ⟨/ raceDetected ⟩' Search results :
+Solution 1, state 299:
+...
+⟨threads⟩
+...
+
+
+
+⟨thread⟩
+...
+⟨race⟩
+∗ 2 = 120 ∼> ...
+⟨/race⟩
+⟨ fstack ⟩
+ListItem(transfer # a |−> 1
+b |−> 2 # HOLE ; ∼>return void ;)
+ListItem(run # . # .)
+⟨/fstack ⟩
+...
+⟨/thread⟩
+⟨thread⟩
+...
+⟨race⟩
+∗ 2 ∼> ...
+⟨/race⟩
+⟨ fstack ⟩
+ListItem(deposit # a |−> 2 b |−> 1 # HOLE ; ∼>
+withdraw ( a , 100 ) ; ∼> ... return void ;)
+ListItem(run # . # .)
+⟨/fstack ⟩
+...
+⟨/thread⟩
+
+
+⟨/threads⟩
+...
+
+Upon analyzing the counter-example configuration (including the fstack cell), one can notice that the race occurs because the access to account b in the transfer function is not synchronized. A simple-minded fix for this problem is to additionally lock on the b account in the transfer function. Upon applying this fix we can verify that the test driver became indeed datarace free using the previous command.
+However, when searching for all possible results after fixing the datarace, we also obtain an unfinished computation in addition to the desired result:
+$ krun pAccount.c −−search
+Search results :
+Solution 1, state 184:
+⟨T⟩
+...
+⟨threads⟩
+
+
+
+⟨thread⟩
+⟨k⟩
+acquire( 1 ) ∼> ...
+⟨/k⟩
+⟨id⟩
+4
+⟨/id⟩
+...
+⟨/thread⟩
+⟨thread⟩
+⟨k⟩
+acquire( 2 ) ∼> ...
+⟨/k⟩
+⟨id⟩
+3
+⟨/id⟩
+...
+⟨/thread⟩
+
+
+...
+⟨/threads⟩
+⟨locks⟩
+1 |−> 3
+2 |−> 4
+⟨/locks⟩
+...
+⟨/T⟩
+Solution 2, state 253:
+⟨ result ⟩
+"100;20;300;220;"
+⟨/ result ⟩
+
+Analyzing this configuration we can detect a deadlock between the two calls to transfer. By following Dijkstra’s [6] solution to deadlock avoidance, we can ensure datarace freeness while avoiding deadlocks. The way to achieve that is by always acquiring resources in the same order in any thread, like:
+if (!( a <= b)) {
+acquire(a); acquire(b);
+} else {
+acquire(b); acquire(a);
+}
+Using this new implementation of the transfer function we can now effectively check that our test driver is datarace and deadlock free:
+$ krun pAccount.c −−search
+Search results :
+Solution 1, state 244:
+⟨ result ⟩
+"100;20;300;220;"
+
+
+⟨/ result ⟩
+
+
+
+
+A Relaxed Memory Model for KernelC
+Let us show how one can give another, more realistic, memory model semantics for the concurrent version of KernelC, and use the available analysis tools to analyze its behaviors and compare it against the sequentially consistent version of KernelC defined in Section 4. We base this semantics on the x86-TSO memory model [15], regarding threads as processors, and local variables as registers.
+Relaxing the traditional sequential consistent semantics for memory access, which requires that reads and writes to the memory are perceived as atomic, the relaxed memory consistency models allow processors to basically have their own views of memory and only synchronize at specified points in the execution. These models allow more parallelism and thus more efficient executions of multithreaded programs; however, these models are harder to reason about, as they are less intuitive and yield a higher number of possible behaviors.
+The x86-TSO memory model used in this section associates a write buffer to each process (or thread, in our case), which collects the local updates of memory variables, and defines the semantics of memory access and synchronization by taking into account these buffers. Therefore, the rules for all involved language constructs need to be changed in our K definition; nevertheless, nothing else except them and the configuration needs to be altered.
+Two more cells need to be added to the ⟨⟩thread cell: a ⟨⟩buffer cell holding the
+queue of buffered writes, and a ⟨⟩blocked cell containing a flag signaling whether the thread is blocked in waiting for a lock. Moreover, we add a list item constructor bwrite to represent a buffered write, that takes as parameters a location and a value; and we define a locations function which retrieves the set of locations from a list of buffered writes:
+syntax  K ::= bwrite( #Nat , Val )
+syntax  Set ::= locations List
+rule
+locations ·List ⇒ ·Set
+rule
+locations bwrite( A , V ) Mem ⇒ A locations Mem
+In what follows we present the K rules specifying the new relaxed memory model semantics for concurrent KernelC preceded by their natural language description taken verbatim from the original TSO article [15]:
+p can read v from memory at address a if p is not blocked, has no buffered writes to a, and the memory does contain v at a;
+rule global-deref
+⟨ * A ···⟩k ⟨Mem⟩buffer ⟨··· A '→ V ···⟩mem ⟨false⟩blocked
+V
+when ¬Bool A in locations Mem
+[transition]
+
+Note that the fact that the thread has no buffered writes is modeled in the rule by the side condition, which requires that the current write buffer (represented by variable Mem) does not have any writes scheduled for the address A we want to read from.
+p can read v from its write buffer for address a if p is not blocked and has v as the newest write to a in its buffer;
+rule local-deref
+⟨ * A ···⟩k ⟨··· bwrite( A , V ) Mem⟩buffer ⟨false⟩blocked
+V
+when ¬Bool A in locations Mem
+[transition]
+V being the latest write to location A in the buffer is ensured by matching the entire contents of the buffer after the write of V to A and by checking (in the side condition) that it does not contain any other write to A.
+p can read the stored value v from its register r at any time;
+Since we view local variables as our registers, and since the rule is unconstrained, the existing rule for reading / writing local variables stays unchanged.
+p can write v to its write buffer for address a at any time;
+rule buffer-write
+
+⟨* A = V ···⟩k ⟨	List
+⟩buffer
+
+V	bwrite( A , V )
+Additionally, in KernelC we need to define the rules for incrementing values at memory locations, which, similarly to the regular reads rules (i) and (ii), have two flavors: depending on whether the location is or is not in the appropriate write buffer:
+rule local-inc
+
+⟨* A ++ ···⟩k ⟨··· bwrite( A , I ) Mem	·List
+⟩buffer
+
+I
+when ¬Bool A in locations Mem
+[transition]
+rule global-inc
+⟨* A ++ ···⟩k ⟨Mem	·List
+bwrite( A , I +Int 1 )
+
+
+
+⟩buffer ⟨··· A '→ I ···⟩mem
+
+	
+I		bwrite( A , I +Int 1 ) when ¬Bool A in locations Mem [transition]
+If p is not blocked, it can silently dequeue the oldest write from its write buffer to memory;
+rule commit-write
+⟨false⟩blocked ⟨bwrite( A , V ) ···⟩buffer ⟨··· A '→ _  ···⟩mem
+·List	V
+[transition]
+p can write value v to one of its registers r at any time;
+Same as for item (iii), the existing rule needs not be changed.
+	If p’s write buffer is empty, it can execute an MFENCE (so an MFENCE cannot proceed until all writes have been dequeued, modelling buffer flushing); 3
+
+3 For the x86 processor, a memory fence (MFENCE) operation ensures that all load and store operations prior to the fence command will have been committed prior to any loads and stores issued following the fence.
+
+We here assume that thread synchronization constructs, such as creation, termi- nation, and join are all generating MFENCE operations:
+context
+spawn _ (  )
+rule spawn
+
+⟨spawn X ( Vl ) ···⟩k ⟨	T
+⟩next ⟨·List ⟩buffer	·Bag
+
+
+
+rule
+T
+[transition]
+T +Int 1
+⟨··· ⟨X ( Vl )⟩k ⟨T⟩id ···⟩thread
+
+⟨··· ⟨V ⟩k ⟨T⟩id ⟨·List ⟩buffer ···⟩thread
+·Bag
+⟨	Set
+T
+···⟩cthreads
+
+rule
+⟨join( N ) ···⟩k ⟨·List ⟩buffer ⟨··· N ···⟩cthreads
+0
+If the lock is not held, and p’s write buffer is empty, it can begin a LOCK’d instruction;
+rule acquire
+
+⟨acquire( N ) ···⟩k ⟨T⟩id ⟨·List ⟩buffer ⟨Locks	·Map
+⟩locks
+
+
+void
+when ¬Bool N in keys Locks
+[transition]
+N '→ T
+
+If p holds the lock, and its write buffer is empty, it can end a LOCK’d instruction.
+rule release
+⟨release( N ) ···⟩k ⟨T⟩id ⟨·List ⟩buffer ⟨··· N '→ T ···⟩locks
+
+
+void
+[transition]
+·Map
+
+Two additional rules are used to update the flag of the ⟨⟩blocked cell:
+rule
+⟨acquire( N ) ···⟩k ⟨ false ⟩blocked ⟨··· N '→ T ···⟩locks
+true
+rule
+⟨acquire( N ) ···⟩k ⟨ true ⟩blocked ⟨··· Locks ···⟩locks
+false
+when ¬Bool N in keys Locks
+The first rule says that the thread becomes blocked if it tries to acquire a lock which is already held, while the second rule unblocks the thread once the lock is released.
+Thus, with precisely one rule for each concurrency construct and without altering unrelated language constructs, we have defined a concurrent semantics for KernelC with a relaxed memory model.
+Using this semantics, we can test, for example, that programs relying on busy- waiting synchronization are not portable from sequentially consistent memory mod- els to relaxed memory models. Consider the KernelC specification of Peterson’s software solution for mutual exclusion [17] presented in Figure 3. The presented implementation uses a function with three parameters, flag, turn, and t. flag is a (dynamically allocated) array, turn points to an integer in memory, and t is used as a thread identifier. To mark the critical sections, we are printing -1 and -2 for the beginning of critical section and 1 and 2 for the end of critical section for the threads identified by 0 and 1, respectively.
+
+
+
+#include <stdio.h>
+#include <stdlib.h>
+void peterson(int ∗flag, int ∗turn, int t) { flag [ t ] = 1;
+∗turn = 1−t;
+while (flag[1−t] && ∗turn == 1−t) {} printf ("%d;",−1 − t);
+printf ("%d;", 1 + t); flag [ t ] = 0;
+}
+
+
+int main() {
+int∗ flag = (int ∗)malloc(2∗sizeof(int)); flag [0]= 0; flag [1]= 0 ;
+int ∗turn= (int ∗)malloc(1∗sizeof(int)); int t1= spawn(peterson(flag, turn, 0)); int t2= spawn(peterson(flag, turn, 1)); join(t1 ); join(t2 );
+return 0;
+}
+
+
+Fig. 3. An implementation of Peterson’s algorithm in KernelC.
+
+Using the previous (sequentially consistent) definition of concurrency for Ker- nelC, one can verify that mutual exclusion is ensured asking krun to search for all final states obtainable upon running the program.
+$ krun pPeterson.c −−search
+Search results :
+
+
+Solution 1, state 66:
+⟨ result ⟩
+"−1;1;−2;2;"
+⟨/ result ⟩
+Solution 2, state 67:
+⟨ result ⟩
+"−2;2;−1;1;"
+⟨/ result ⟩
+
+The obtained results effectively show that the statements in the two critical sections cannot be interleaved.
+However, when exploring the executions of the same program in the relaxed memory model definition of concurrent KernelC, mutual exclusion is not ensured: indeed krun finds 6 solutions to the same task, showing that the sequences -1,1 and
+-2,2 can be interleaved in every possible way:
+$ krun pPeterson.c −−search
+Search results :
+
+Thus, by applying a simple, generic, and already available rewriting logic tool on our K definitions we have shown that the relaxed memory model for KernelC de- fined in this section cannot be relied on for achieving mutual exclusion for programs which achieve that under the sequential consistency assumptions of the definition in Section 3.1.
+We could even go one step further. Assume we decide to implement an additional library function call to a function mfence, whose semantics is to enforce the memory fence (i.e., that the buffer is emptied) before continuing:
+rule
+
+syntax  Exp ::= mfence()
+⟨mfence() ···⟩k ⟨·List ⟩buffer
+
+void
+
+With this simple, but powerful, library call, we can adjust the Peterson program by inserting a mfence() call right before the while loop. This is enough to guarantee mutual exclusion, as shown when exploring all the interleavings with the krun tool:
+$ krun pPeterson.c −−search
+Search results :
+
+
+Solution 1, state 66:
+⟨ result ⟩
+"−1;1;−2;2;"
+⟨/ result ⟩
+Solution 2, state 67:
+⟨ result ⟩
+"−2;2;−1;1;"
+⟨/ result ⟩
+
+
+Conclusions
+We have shown how K definitions of programming languages can be turned (with negligible effort) into runtime analysis tools for testing and analyzing executions of concurrent programs.
+Moreover, having different variants for the semantics of the same language fea- tures (e.g., different memory models) formalized in the same (executable) framework opens the door for testing and analyzing the relationship between different possible semantics of a language. This could be a very useful tool for language designers, allowing them to experiment by testing different possible semantics of the same feature against a suite of benchmark programs before deciding which semantics to implement.
+We do not claim here that the tools one obtains almost for free within the K framework completely eliminate the need of writing dedicated analysis tools in “real” programming languages. Nevertheless, we strongly believe that the K framework can be viewed like a workbench for rapidly prototyping and experimenting with such analysis tools. Moreover, we believe that compilation techniques could be used to generate (more) competitive analysis tools directly from K definitions.
+
+References
+Atig, M. F., A. Bouajjani, S. Burckhardt and M. Musuvathi, On the veriﬁcation problem for weak memory models, in: POPL, 2010, pp. 7–18.
+Burckhardt, S., R. Alur and M. M. K. Martin, Checkfence: checking consistency of concurrent data types on relaxed memory models, in: PLDI, 2007, pp. 12–21.
+Burckhardt, S. and M. Musuvathi, Eflective program veriﬁcation for relaxed memory models, in: CAV, LNCS 5123, 2008, pp. 107–120.
+Burnim, J., K. Sen and C. Stergiou, Sound and complete monitoring of sequential consistency for relaxed memory models, in: TACAS, LNCS 6605, 2011, pp. 11–25.
+
+Clavel, M., F. Durán, S. Eker, J. Meseguer, P. Lincoln, N. Martí-Oliet and C. Talcott, “All About Maude, A High-Performance Logical Framework,” LNCS 4350, Springer, 2007.
+Dijkstra, E. W., Solution of a problem in concurrent programming control, Commun. ACM 8 (1965),
+p. 569.
+Ellison, C., “A Formal Semantics of C with Applications,” Ph.D. thesis, University of Illinois (2012).
+Ellison, C. and G. Roşu, An executable formal semantics of C with applications, in: POPL’12 (2012),
+pp. 533–544.
+
+
+Ellison, C., T. F. S, erbănut,ă and G. Ros,u, A rewriting logic approach to type inference, in: WADT’08, LNCS 5486 (2009), pp. 135–151.
+Farchi, E., Y. Nir and S. Ur, Concurrent bug patterns and how to test them, in: IPDPS (2003), p. 286.
+Flanagan, C. and S. N. Freund, Adversarial memory for detecting destructive races, in: PLDI, 2010,
+pp. 244–254.
+Gopalakrishnan, G., Y. Yang and H. Sivaraj, Qb or not qb: An eﬃcient execution veriﬁcation tool for memory orderings, in: CAV, LNCS 3114, 2004, pp. 401–413.
+Hills, M., F. Chen and G. Ros,u, A rewriting logic approach to static checking of units of measurement in C, in: RULE’08, 2008, pp. 76–91, Tech. Rep. IAI-TR-08-02, Institut für Informatik III, Rheinische Friedrich-Wilhelm-Universität Bonn.
+Hills, M. and G. Rosu, A rewriting logic semantics approach to modular program analysis, in: RTA’10, LIPIcs 6 (2010), pp. 151–160.
+Owens, S., S. Sarkar and P. Sewell, A better x86 memory model: x86-TSO, in: TPHOLs’09, LNCS, 2009, pp. 391–407.
+Park, S. and D. L. Dill, An executable speciﬁcation, analyzer and veriﬁer for rmo (relaxed memory order), in: SPAA, 1995, pp. 34–41.
+Peterson, G. L., Myths about the mutual exclusion problem, Information Processing Letters 12 (1981),
+pp. 115–116.
+Roşu, G. and A. Ştefănescu, Matching logic: A new program veriﬁcation approach (NIER track), in: ICSE’11: Proceedings of the 30th International Conference on Software Engineering (2011), pp. 868– 871.
+Roşu, G., C. Ellison and W. Schulte, Matching logic: An alternative to Hoare/Floyd logic, in: AMAST ’10, LNCS 6486, 2010, pp. 142–162.
+Ros,u, G., W. Schulte and T. F. S, erbănut,ă, Runtime veriﬁcation of C memory safety, in: RV’09, LNCS
+5779, 2009, pp. 132–152.
+Ros,u, G. and T. F. S, erbănut,ă, K overview and SIMPLE case study, this volume.
+Roşu, G. and T. F. Şerbănuţă, An overview of the K semantic framework, Journal of Logic and Algebraic Programming 79 (2010), pp. 397–434.
+S, erbănut,ă, T. F., A. Arusoaie, D. Lazar, C. Ellison, D. Lucanu and G. Ros,u, The K primer (version 2.5), this volume.
