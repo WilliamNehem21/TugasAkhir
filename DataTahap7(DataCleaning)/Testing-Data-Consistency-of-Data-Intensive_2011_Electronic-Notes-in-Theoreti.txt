@@ -1,0 +1,88 @@
+many software systems are data-intensive and use a data management systems for data storage, such as relational database management systems(rdbms). rdbmss are used to store information in a structured manner, and to define several types of constraints on the data, to maintain basic consistency. the rdbmss are mature, well tested, software products that one can trust to reliably store data and keep it consistent within the defined constraints.
+
+
+
+there are, however, scenarios in which passing the responsibility of consistency enforcement to the rdbms is not convenient, or simply not possible. in such cases, the alternative is to have that responsibility at the business logic level of the system. hence, from the point of view of testing data-intensive applications, one of the most relevant aspects is to ensure correctness of the business logic in terms of data consistency.
+
+
+
+in this article, we show how quickcheck, a tool for random testing against specifications, can be used to test the business logic of an application to increase confidence on data integrity. we build an abstract model of the data containing the minimum information necessary to create meaningful test cases, while keeping its state substantially smaller than the data in the complete database. from the abstract model we automatically generate and execute test cases which check that data constraints are preserved.
+
+
+
+many applications use one or more databases to store vast amounts of data. they also provide a number of different interfaces to inspect and modify the data. some application interfaces may be accessed from a web interface, others may be used from a desktop application. different users have different access rights, and therefore are presented with different interfaces to the data.
+
+
+
+the database normally constrains certain relations on the data that cannot be violated; given that the database management system is correctly implemented. on top of these built-in constraints there are other rules that are imposed by the application. these constraints involve not only data format or relationships, but also non-trivial calculations. for example, constraints on top of built-in constraints could be to ensure that a zip code is of the right format for a given country, or that a user can only update certain profile information after having completed updating some registration data. in general, these constraints are verified by the application, that is, the system validates that input data is of the right format, or that a process is followed before the database is actually queried. neglecting to verify the information, will result in storing data in the database that does not fulfil the constraint.
+
+
+
+we formulate the model as a quickcheck 4 specification[4, 13]. quickcheck is a tool for guided random testing. quickcheck specifications are written in the functional language erlang[2, 7] with some quickcheck specific macro definitions. the tool automatically generates and executes test cases from the provided specifications.
+
+
+
+the method for testing data-intensive systems by using quickcheck that we propose, is presented in this paper by means of a little example illustrating an on-line shop. the method was developed, however, while testing a real insurance system. we started testing that real application after it had been in service for a few years in order to obtain knowledge on how to test such systems. we have not identified any faults in the production code by using our method, but we were able to show usability of the method by injecting faults in the production code and detecting them by running the tests originating from our method. moreover, after developing the method, a master student project was conducted in which another commercial database intensive system was tested in the same way. that project resulted in the detection of a number of faults and showed that the method was applicable to a broader domain.
+
+
+
+in this section we introduce a simple application that serves as the running example in the paper. the example demonstrates how in practise certain data constraints are better defined in the business logic layer instead of in the persistence layer of a system. we describe a general method on testing data consistency that generalises to much larger databases, such as the ones used in the case studies we will see in section 5. the method is used for testing that the application cannot violate the business rules by accessing the database through the business logic layer, i.e., by using any of the possible application interfaces. the method should be applicable to relational as well as non-relational databases with several concurrent clients accessing the system. however, we have not explicitly addressed distributed databases or time critical databases in our research.
+
+
+
+we call an interface function call a positive test if it is expected to return successfully, we call it a negative test if it is expected to return an error. whether or not we expect an interface function to return successfully or to return an error depends on the state of the database or, in other words, on the preceding interface calls. for example, some tests would violate a business rule when performed at a given state, so we test that, given such state of the model, the result is an error message by the interface and the database state does not violate the business rules afterwards.
+
+
+
+now the challenge is to abstract from the data in the database and use that abstraction as a test model. otherwise, we would end up with a copy of the entire database as state. not only would that be potentially too large to handle, more seriously, we would have to re-implement(at least part of) the business logic to deal with it, since re-using the implementation under test would not enable us to find errors. of course, implementing software twice is an unattractive idea; apart from the work involved, one would probably make similar mistakes.
+
+
+
+we start by identifying the interface functions in our application. for example, in our shop example we have: new customer, add product, place order, etc. of course, in a small example like the one we present here, the interface functions are limited and simple, but it explains our point.
+
+
+
+we could implement a more specific generator, e.g. creating the name as a firstname and a lastname both starting with an uppercase character and the rest in lowercase. that, however, would only be significant if this indeed is part of the business rules and in case the interface functions should ensure this. keep in mind that this allows to add the same user twice. we want this to be a potential test case, since the business logic may prevent or allow that situation.
+
+
+
+testing approach the product and customer are automatically generated when not present in the database. we propose a different tactic and use the test state(s) to keep track of created customers and products in order to use them in calls to place order and similar. in addition, we still choose now and then, with a small probability, a customer or product(or both) that is not present in the state, to test correct handling of those error scenarios(negative testing).
+
+
+
+the lists of products will later be inhabited by codes of products that we have added in the executed test. thus, the field products stores a list of indices. respectively, the customer list contains a list of the customer data type, which is a record with two fields,#customer{id, orders=[]}, the customer identifier id and a list of orders placed, where an order is stored by its order identifier, needed for cancelling the order. we could also add all product codes that are ordered in the order information, but since our approach is to keep the model as simple as possible, therewith reducing the amount of work necessary, there is really no reason to do so. we only store the data that is created by the database and not part of the data provided in the test cases.
+
+
+
+each interface function execution may have an influence on the state, so we define a state transition function next state in our state machine model to reflect that. this function takes three arguments, first the present abstract state s, then a place holder for the result that the interface function returns, and the representation of the interface function. the next state function returns the updated test state, which is an abstraction of the state we expect the database to be in after executing the interface call.
+
+
+
+where the generators customer id and product code pick a random integer(since entity keys are represented by integers in the database of the on-line shop), and add it to the list of known keys. besides, the quickcheck generator oneof takes a random element from a given list 5. thus, we can generate calls to functions such as add product or place order with identifiers of products and/or customers that may already exist or not(with a lower probability) as arguments.
+
+
+
+since we use a transactional database, each access to the database is performed as a transaction. in order to be sure that the invariant checking does not affect the database state, we undo the transaction immediately after performing it. strictly speaking there is no need for a rollback, since it is performed at the end of the test and also because we only retrieve entries in order to validate the invariant, we never modify an entry.
+
+
+
+in our shop example, it is always possible to create a new customer and get a new identifier in return. we cannot possibly know which identifier will be returned, but there is no need for us to be aware of the precise value. therefore, our local version of the new customer function invokes the corresponding interface function for creating a user and matches the result with the expected value, in this case just checking its type. failure to match the value results in a failing test case.
+
+
+
+in this particular case the combination of validator and interface function only contains the interface function, since no additional conditions on the database are checked. if the actual value matches the expected value, i.e. is an integer, then we return that value, otherwise we raise an exception and the test fails.
+
+
+
+we implement a case distinction on the obtained result instead of on the combination of conditions. on the one hand this reduces the amount of code, since we need only one alternative for each possible return value. on the other hand, we specify different from what we would do when implementing the business logic layer. if code is different, it is less likely that we make the same mistake. but even more importantly than the two reasons above, we do not have to bother about the(normally) unspecified implementations of dealing with double faults; in case both product and customer do not exist, we have no clue which of the errors is produced. by looking at the result, no matter which of the two error messages is produced, we accept it.
+
+
+
+after being tested by regular users during the last stages of development. such testing process is common in software development, but it is hardly ever complete and exhaustive. the fact that an application has been running daily without major problems is just a weak empirical evidence of correctness.
+
+
+
+for each interface function, write a local checking function in which firstly a number of predicates are evaluated(conditions on the existing data). secondly, the actual interface function is called. and thirdly, it is validated whether the result of the real interface function corresponds to what could be expected from the previously computed predicates.
+
+
+

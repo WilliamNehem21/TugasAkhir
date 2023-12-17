@@ -1,0 +1,92 @@
+fastflow is one of the most promising multicore c++ libraries. unfortunately, a design problem occurs in the library. one of the most important methods is pure virtual function in a base class. this method supports the communication between different threads. although, it cannot be template function because of the virtuality, hence, the threads pass and take argument as a void* pointer. the base class is not template neither. this is not typesafe approach. we make the library more efficient and safer with the help of generative technologies.
+
+
+
+indeed, memory fences are one of the key sources of performance degradation in communication intensive(e.g. streaming) parallel applications. avoiding memory fences means not only avoiding locks but also avoiding any kind of atomic operation in memory(e.g. compare-and-swap, fetch-and-add). while there exists several assessed fence-free solutions for asynchronous symmetric communications, these results cannot be easily extended to asynchronous asymmetric communications that are necessary to support arbitrary streaming networks.
+
+
+
+fastflow is a parallel programming framework for multi-core platforms based upon non-blocking lock-free/fence-free synchronization mechanisms. the framework is composed of a stack of layers that progressively abstracts out the programming of shared-memory parallel applications. the stack has two different goals: to ease the development of applications and make them very fast and scalable. fastflow is particularly targeted to the development of streaming applications.
+
+
+
+abstract class ff node. it has a pure virtual method svc, which is the main method of every thread in the application. however, it is needed to handle any kind of data type, but while it is a virtual function it cannot be template. although, the base class could be a class template. however, this solution is neither elegant nor typesafe.
+
+
+
+in this paper we present our solution about how fastflow library can be extended to be type-safe. we make the abstract base class be templated and we use static polymorphism instead of dynamic polymorphism by curiously recurring template pattern. this way in one hand the system will be type-safe, and on the other hand the virtuality of the method can be eliminated, thus the system becomes more effective.
+
+
+
+this paper is organized as follows. in section 2 the fastflow library is shown and present typical examples that are risky from the view of program correctness. we present an approach that can be used to overcome this problem by the type system of c++ in section 3, the implementation details are described in section 4. the sections 5 and 6 present our pipeline and buffer implementation. in chapter 7 we demonstrate the usage of our extended fastflow library through an example. finally, this paper concludes in section 8.
+
+
+
+the performance advantage of this solution descend from the higher speed of the copy with respect to the memory fence, that advantage is further increased by avoiding cache invalidation triggered by fences. this also depends on the size and the memory layout of copied data. the former point is addressed using data pointers instead of data, and enforcing that the data is not concurrently written: in many cases this can be derived by the semantics of the skeleton that has been implemented using mpmc queues(as an example this is guaranteed in a stateless farm and many other cases).
+
+
+
+when using dynamically allocated memory, the memory allocator plays an important role in term of performance. dynamic memory allocators(malloc/ free) rely on mutual exclusion locks for protecting the consistency of their shared data structures under multi-threading. therefore, the use of memory allocator may subtly reintroduce the locks in the lock-free application. fastflow includes its own custom memory allocator, which is specifically optimized for spmc pattern. the basic assumption is that, in streaming application, typically, one thread allocate memory and one or many other threads free memory. this assumption permits to develop a multi-threaded memory allocator that use spsc channels between the allocator thread and the generic thread that performs the free, avoiding the use of costly lock based protocols for maintaining the memory consistency of the internal structures. however, the fastflow allocator is not a general purpose allocator and it has limitations.
+
+
+
+let us consider the following code snippet that takes advantage of fastflow library: the emitter feeds the workers with data, now it just send integers. the worker processes the data, and passes it toward to the other worker or a collector, depends on the initialization of fastflow. now it just prints the received integer value to the screen, and pass it toward to the collector. the collector gathers the computation results done by the workers. now it just receives the integer value and does nothing.
+
+
+
+via void* pointers, so arbitrary data can be passed. but this approach is not typesafe at all. fastflow works this way because the svc method is specified as a pure virtual function in the base class. a template method can be typesafe and elegant solution to pass arbitrary data, however, a(pure) virtual method cannot be template. on the other hand, the abstract base class itself could be template, but the original implementation does not take advantage of this feature.
+
+
+
+curiously recurring template pattern can be used for static polymorphism. this idiom is able to simulate dynamic binding without virtual functions. in this case, the method is selected at compilation time, hence this approach is more effective at run-time, too. this pattern can be used in many ways. typical appearance of this approach is the following:
+
+
+
+in fastflow the base class of parallel computing is ff node. that class has a pure virtual method called svc, which has a void* argument. all of the classes take part in parallel computation must be derived from ff node and must implement the member function svc. as the argument type of svc is void*, it can accept arbitrary data, however, it is not a type safe solution. inside the function we need to cast the argument to a proper type. casting to an improper type causes a runtime error. nevertheless it can be compiled without any error or warning message, making the bugfix more difficult.
+
+
+
+3. this way, the function svc does not need to be virtual and the type of its argument can be a properly typed pointer. the type of the argument is a template parameter of class ff node. the class ff node has another template parameter which refers to the type of its derived class. the following code snippet shows the declaration of class ff node:
+
+
+
+the class ff farm represents a farm skeleton. originally that class has two template arguments, the type of load balancer and the type of gatherer. these template arguments have default value, thus the programmer can skip them and let the fastflow use the default types. we defined five template arguments of ff farm additionally. the first three template arguments refer to the type of emitter, worker and collector, the fourth one refers the type passed as argument of member function svc, the fifth one is a boolean value which sets whether fastflow uses circular or non-circular buffer. the last two are the original template arguments. the details of buffers are described in section 6. as the ff farm is a child class of ff node, it needs to pass itself to a template argument of ff node. the following code snippet shows the declaration of the class ff farm.
+
+
+
+the high level pipeline schema is also supported by fastflow. the frame class of pipeline is called ff pipeline. the pipeline contains stages, one stage can be either a standalone ff node or a farm skeleton. in the original version, the pipeline stores the stages in a vector of ff node*, where the ff node is the base type of the stages, and the virtual function svc does the computation.
+
+
+
+in our solution, where the dynamic polymorphism replaced with static polymorphism, this approach does not work. while the stage classes have to add themselves as a template argument of ff node, their base types will be different. hereby they cannot be stored in one vector.
+
+
+
+the computation starts by the member function do of struct ff pipeline. it instantiates the struct do aux with 0 and the size of the typelist and invokes its static member function. the entities in scope boost::mpl are described in.
+
+
+
+while a template argument of ff pipeline refers to the type of the stages, their structure must be known at compilation time. therefore it introduces a restriction of the usage. however, in most cases the structure of the pipeline is defined at compilation time, thus it is not a real limitation.
+
+
+
+the original version of fastflow can use either circular or non-circular buffer as a channel between worker threads. these buffers store void* to be able to handle different types of data. by default the non-circular buffer is used, however, the programmer can select the other one by defining preprocessor macro ff bounded buffer. the following preprocessor code snippet shows how the proper buffer is chosen.
+
+
+
+in our solution we avoid using preprocessor macros to defining the buffers. instead we add an extra boolean template argument to ff farm called is circular, to indicate which kind of buffer to be to use. the true value means we want to use circular buffer, and the false means we chose the non-circular one. the default value of that template argument is false.
+
+
+
+in this chapter we show the example of chapter 2 rewritten with templates. each class derived from ff node instantiated with itself and the task type int. the function svc in each classes has a properly typed pointer, instead of void*. the main function creates the farm, the emitter, worker and collector classes, and starts computing.
+
+
+
+in this paper we pointed out a weakness of the fastflow multicore programming library of the c++ programming language. the original version of fastflow uses void* to communicate the between threads. while this method provides a simple solution to pass arbitrary data, it is not typesafe and increases the chance of make mistakes.
+
+
+
+be misleading. we have eliminated virtuality of a very important method in the library, but we have not changed anything in the multicore functionality. the typical conception of efficacy of a multicore library is based on the features of multicore programming and it is unchanged in this case.
+
+
+

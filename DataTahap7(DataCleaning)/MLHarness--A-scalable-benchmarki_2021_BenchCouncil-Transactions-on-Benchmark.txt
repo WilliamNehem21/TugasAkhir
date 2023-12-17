@@ -1,0 +1,64 @@
+ml and dl innovations such as applications, datasets, frameworks, models, and software and hardware systems, are being developed in a rapid pace. however, current practice of sharing ml/dl innovations is to build ad-hoc scripts and write manuals to describe the workflow. this makes it hard to reproduce the reported metrics and to port the innovations to different environments and solutions. therefore, having a standard benchmarking platform with an exchange specification and well-defined metrics to fairly compare and benchmark the innovations is a crucial step toward the success of ml/dl community.
+
+
+
+mlcommons[1,11], previously known as mlperf, is a platform aims to answer the needs of the nascent machine learning industry. mlcommons training measures how fast systems can train models to a target quality metric, while mlcommons inference measures how fast systems can process inputs and produce results using a trained model. both of these two benchmark suites target on providing benchmarking results on different scales of computing services, ranging from tiny mobile devices to high performance computing data centers. as the main focus of this paper is on benchmarking ml/dl inferences, we only focus on mlcommons inference in the rest of this paper.
+
+
+
+metrics. apart from the commonly used model metrics such as accuracy, mlcommons inference also includes a set of systems related metrics, such as percentile-latency and throughput. these make mlcommons inference appealing in satisfying the demand of different use cases, such as 99% percentile-latency for a data center to respond to a user query.
+
+
+
+system under test(sut). the sut consists of the inference system under benchmarking, including ml/dl frameworks, ml/dl models, software libraries and the target hardware system. once the sut receives a query from the loadgen, it completes an inference run and reports the result to the loadgen.
+
+
+
+in fact, the only critical component in mlcommons inference is the loadgen, while the other components can be replaced with any inference systems. in this paper, we present how to replace the components other than the loadgen by mlmodelscope, an inference platform with a clearly defined exchange specification and an acrossstack profiling and analysis tool, and extend mlmodelscope so that it becomes a scalable benchmarking harness for mlcommons inference. this greatly extends the applicability of mlcommons inference for models well beyond it.
+
+
+
+frameworks, it currently only supports models for computer vision tasks. while mlmodelscope discussed the possibility of using userdefined pre-processing and post-processing inline python scripts to serve as a universal handler for all kinds of models, mlmodelscope did not implement those interfaces but only introduced built-in image manipulations to support computer vision tasks. in this paper, we have actually implemented the user-defined pre-processing and post-processing interfaces and demonstrated its usage on models with different modalities and different pre-processing and post-processing, such as question answering and medical 3d image segmentation.
+
+
+
+in order to avoid using intermediate files, we instead use python/c apis to embed a python interpreter into mlmodelscope to execute python functions, as suggested by dlspec. to use these apis, we need to implement wrappers in go to call them. instead of building these wrappers from scratch, we use the open source go-python3 bindings. in this fashion, the python functions can be executed within mlharness directly to avoid the problems mentioned in the naive solution.
+
+
+
+movedatatopythoninterpreter. moving data from go to python is not easy since the data being processed are large, for example, a tensor representing an image. one solution is to serialize the data at one end, transfer the data as a string, and deserialize at the other end. however, it introduces a high overhead due to the high cost of encoding and decoding. to overcome this problem and to make data transfer efficient, we propose to copy the data in-memory, i.e., we only send the shape of the tensor and the address of its underlying flattened array, and reconstruct the tensor by copying data from the address and by its shape. note that to guarantee the validity of data transfer, we need to make sure that the underlying flattened array represents the tensor contiguously, particularly in case lazy operations were done on the tensor, such as transposition.
+
+
+
+executeprocessingfunction. the signatures of the processing functions in the model manifest are in the form of process(ctx, data), where ctx is a dictionary capturing additional information in the manifest, and data is the tensor we got from movedatatopythoninterpreter. therefore, in order to invoke the processing function, we need to call the go-python3 binding with the pyobject of the processing function, the dictionary of ctx and the data going to be processed. note that the data is only effective for preprocess and postprocess, and it is just a pyobject of none for the other four processing functions.
+
+
+
+data transmissions. it is hard to directly exchange data between go and python, since there is no one-to-one correspondence between data types in these two languages. to solve this problem, we utilize the built-in primitive c compatible data types in ctypes for python and cgo for go, since they define how to transform data if there is no clear correspondence between data types in c and the corresponding languages. using this method, the data conversion can be done in-memory instead of through serialization.
+
+
+
+blocking statements. when we exchange data between go and python, the garbage collector at one end does not automatically know that it needs to keep the data before the data are really copied or used at the other end, which might result into undefined behaviors. to solve this problem, we need to manually create blocking statements to block garbage collection until a deep copy of the data is made at the other end. this can be done using the keepalive function in go and managing reference counts in python to prevent garbage collection being invoked until the keepalive is executed and the reference count is decreased to zero, respectively.
+
+
+
+we conduct two sets of experiments to demonstrate the success of mlharness on overcoming the limitations in mlmodelscope and mlcommons inference. in the first set of experiments, we use mlharness to benchmark models in mlcommons inference and report mlcommons inference defined metrics to show that it supports modalities that are not supported in mlmodelscope, such as question answering and medical image 3d segmentation. in addition, we show that mlharness is able to report the results for all four scenarios defined by mlcommons inference. in the second set of experiments, we use mlharness to benchmark models beyond mlcommons inference and report mlcommons inference defined metrics to show the usage of our newly extended mlmodelscope as an easy-to-use black box for mlcommons inference.
+
+
+
+mlharness is also capable of reporting results of the other two scenarios as defined by mlcommons inference, which are the server and the multistream scenarios. the server scenario represents applications where query arrival is random and latency is important, such as online translation. the multistream scenario represents application with a stream of queries, where each query consists of multiple inferences, such as multi-camera driver assistance. we demonstrate that mlharness is able to report the results of these two scenarios by running resnet50 on 9800-ort-rtx.
+
+
+
+are alexnet along with five models from the resnet family. all of these models are from torchvision, where the implementation details and the reference accuracy can be found at its github page. again, the success of importing these models into mlharness using the exchange specification is validated by the accuracy results, where all of them are within at least 99% of the reference accuracy as stated by torchvision. in addition, the pre-processing and post-processing functions in the exchange specification can be regarded as a reusable component because these models share the same pre-processing and post-processing steps.
+
+
+
+the experimental results above demonstrate the success of mlharness in benchmarking ml/dl model inferences by providing an extended exchange specification for researchers to easily plug in their ml/dl innovations and collect a set of well-defined metrics. one of our near future goals is to further extend mlharness to support mlcommons training. nevertheless, the impact of mlharness is not only restricted to ml/dl community. benchmarking, reproducibility, portability, and scalability are important aspects in any computing-related research, such as high performance computing and computational biology. the success of mlharness is only a starting point, from which we are aiming for extending the same techniques to other research domains
+
+
+
+as ml/dl community is flourishing, it becomes increasingly imperative to standardize a common set of measures for people to benchmark and compare ml/dl models quality and performance on a common ground. in this paper, we present mlharness, a scalable benchmarking harness system, to remedy and ease the adoption of ml/dl innovations. our experimental results show superior flexibility and scalability of mlharness for benchmarking and porting, by utilizing the extended exchange specification and reporting community acknowledged metrics. we also show that with the help of mlharness, we are able to easily pinpoint critical distinctions between ml/dl innovations, by inspecting and aligning profiling information across stacks.
+
+
+

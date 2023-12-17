@@ -1,0 +1,36 @@
+since hellofun is a function, to actually build an instance of the hello package, we must call it. this is done at point 3, and the resulting build graph is bound to the variable hello. the function is called with a set of arguments inherited from the surrounding lexical scope using the inherit keyword.(inherit x is merely syntactic sugar for an argument specification x= x;, i.e. the argument x is the expression x, where the latter x refers to the variable x in the surrounding scope.) of course, the function can be called any number of times. for instance, if we had a value perl6 representing a different version of perl, we could build hello with it: hellowithperl6= hellofun{inherit fetchurl stdenv; perl= perl6;}. this is a lazy language: expressions are only evaluated, and the build graphs they represent only built, when they are actually needed. it is not the purpose of this paper to give a full treatment of nix or its expression language.(these can be found in and in the nix manual at http:
+
+
+
+as an example of a simple rewrite rule, consider conditionals, if e1 then e2 else e3. conditional expressions first evaluate the condition expression. it must evaluate to a boolean.(evaluation fails if it is not, but for simplicity i will not consider type errors here.) the conditional then evaluates to one of
+
+
+
+for the remaining rules below, we need a notion of substitution of expressions for variables in other expressions. the substitution function subst(subs, e)(not shown here) performs a set of substitutions subs in the expression e. the set subs consists of substitutions of the form x~ e that replace a variable x with an expression e. subst replaces all free variables for which there is a substitution. a variable is free in a subexpression if it is not bound by any of its enclosing expressions. variables are bound in functions and in recursive attribute sets. in recursive attribute sets, only the recursive attributes(as1) bind variables; the non-recursive attributes(as2) do not. it is assumed that the expressions in subs contain no free variables, so subst does not have to perform renaming to prevent name capture.
+
+
+
+a recursive attribute set is desugared to a normal attribute set by replacing all occurrences of references to the attributes with the recursive attribute set. for instance, if e= rec{x=fx y;y= x;}, then e is desugared to{x= f(e.x)(e.y); y= e.x;}, or in full,{x= f((rec{x= f x y; y= x;}).x)((rec{x= f x y; y= x;}).y); y=(rec{x= f x y; y= x;}).x;}. this desugaring is implemented by the rec rule:
+
+
+
+using term rewriting, it is straight-forward to turn the semantic rules from the previous section into a concrete interpreter for the language. however, without maximal laziness, such an interpreter would not perform well. this section shows how we can obtain an efficient interpreter from a straight-forward translation of the semantic rules using term rewriting and maximal laziness.
+
+
+
+be evaluated, and returns a pointer to the aterm representing the resulting normal form. helper functions such as matchif are used to recognise and build aterms. the elided helper function evalbool(e) calls eval(e) and returns true if the resulting term is bool(true).
+
+
+
+because of maximal laziness, we get some optimisations that are conventionally applied to purely functional languages for free. for instance, the full laziness transformation makes code more efficient by moving subexpressions outward as far as possible, e.g. let{f x= let{y= fac 100} in x+ y} in f 1+ f 2, which computes fac 100 twice, can be transformed into let{y= fac 100; f x= x+ y} in f 1+ f 2, which computes it only once in a conventional lazy implementation. with maximal laziness, this transformation is unnecessary: repeated occurrences of the same subexpression across multiple calls to a function will be computed only once.
+
+
+
+traditional sharing: an implementation that updates variable bindings after they have been evaluated. this is the sharing model in most implementations of functional languages. this implementation is a modification of the existing(maximally lazy) nix expression evaluator, made for comparison purposes. it therefore does use the aterm library, and maximal sharing to store terms efficiently.
+
+
+
+maximal laziness with closed term optimisation wraps substituted terms in closed nodes as described in ssec:subst. this very simple change alone makes maximal laziness fast enough: operations such as nix-env-qa now run in a few seconds, which is actually faster than similar operations in other package management tools that do not have package descriptions in a full-fledged programming language. we can thus conclude that the closed term optimisation is essential to make maximal laziness feasible. this is the variant that the production version of nix uses.
+
+
+

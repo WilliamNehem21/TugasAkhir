@@ -1,0 +1,76 @@
+we have studied the collateral evolution problem in the context of linux device drivers. currently, collateral evolutions in linux are mostly done manually using a text editor, possibly with the help of tools such as grep. the large number of linux drivers, however, implies that this approach is time-consuming and unreliable, leading to subtle errors when modifications are not done consistently.
+
+
+
+in previous work, we have identified the phenomenon of collateral evolution, in which an evolution that affects the interface of a generic library entails modifications, i.e., collateral evolutions, in all library clients. as part of this previous work, we have furthermore studied this phenomenon in the context of linux device drivers.
+
+
+
+in this paper, we propose a declarative transformation language, smpl(semantic patch language), to express precisely and concisely collateral evolutions of linux device drivers. linux programmers are accustomed to exchanging, reading, and manipulating patch files that provide a record of previously performed changes. thus, we base the syntax of smpl on the patch file notation. unlike traditional patches, which record changes at specific sites in specific files, smpl can describe generic transformations that apply to multiple collateral evolution sites. in particular, transformations are defined in terms of control-flow graphs rather than abstract syntax trees, and thus follow not the syntax of the c code but its semantics. we thus refer to the transformation rules expressed using smpl as semantic patches.
+
+
+
+the rest of this paper is organized as follows. section 2 describes a set of collateral evolutions that will be used as our running example. section 3 illustrates how one of these collateral evolutions is expressed using the standard patch notation.
+
+
+
+the collateral evolutions in the proc info functions were triggered by the decision that it is undesirable for drivers to directly use the functions scsi host hn get to obtain access to a representation of the device and scsi host put to give up this access, because any incorrect use of these functions can break the integrity of associated reference counts. starting in linux 2.5.71, these functions were no longer exported by the scsi driver support library. to compensate for this evolution, the proc info functions were then passed a representation of the device as an extra argument. an existing parameter that was used as the argument of scsi host hn get was also removed. among the drivers in the linux source tree, these collateral evolutions affect 19 scsi driver files, in 4 different directories.
+
+
+
+normally, a patch file is applied to a file that is identical to the one used by the linux developer to create it. it is possible to instruct the patch tool to ignore the line numbers or some of the lines of context, to be able to apply a patch to a file that is similar but not identical to the one intended. nevertheless, because there is no semantic analysis of either the meaning of the patch or that of the affected source code, this approach is error prone. furthermore, in practice, patches are quite brittle, and variations in the source code imply that parts of the patch cannot be applied at all.
+
+
+
+to express collateral evolutions, we propose a new language smpl as a means of generalizing patches to semantic patches. a semantic patch is a specification that visually resembles a patch, but whose application is based on the semantics of the code to be transformed, rather than its syntax. the complete language is defined in the appendix. here, we present smpl via an example, a semantic patch expressing the collateral evolutions described in section 2. we develop the semantic patch incrementally, by showing successive excerpts that each illustrate a feature of smpl. in contrast to a patch that applies to only one file, the semantic patch can be applied to all of the files in the linux source tree, to selected files, to an individual file, or even to files outside the linux source tree.
+
+
+
+the previous rule assumes that the proc info function has parameters buffer, start, etc. in practice, however, the parameter names vary from one driver to another. to make the rule insensitive to the choice of names, we replace the explicit names by metavariables. these are declared in a section delimited by@@ that appears before each transformation, as illustrated below:
+
+
+
+the metavariables buffer, start, offset, length, hostno, and inout are used on lines annotated withor space, and thus match terms in the original source program. they are declared as identifier, indicating that they match any identifier. the metavariable hostptr represents a parameter that is newly added to the function signature. we thus declare it as a fresh identifier, indicating that some identifier should be chosen that does not conflict with the other identifiers in the program.
+
+
+
+the rule above is written as a direct assignment of the proc info field to the name of a local function. in the code to be transformed, however, the right-handside of this assignment could be some other expression that is the alias of a local function. the patterns of such aliasing that we have observed in driver code are very simple, such as initializing a local variable to a different function in each branch of a conditional, and then using this local variable immediately thereafter. such aliases can be detected by a standard dataflow analysis.
+
+
+
+recall that in section 4.2, we created a fresh identifier as the new parameter hostptr. in fact, when the collateral evolutions were performed by hand, the parameter was always given the name of the deleted scsi host-typed local variable. now that we have expanded the semantic patch excerpt to contain both the parameter and the local variable declaration, we can express this naming strategy by using the same metavariable, declared as an identifier, in both cases. this repetition implies that both occurrences refer to the same term, thus transmitting the name of the old local variable to the new parameter. metavariables are thus similar to logic variables, in that every occurrence of a metavariable within a rule refers to the same set of terms. unlike the logic variables of prolog, however, metavariables are always bound to ground terms.
+
+
+
+the collateral evolution described in this section introduced some bugs in the linux 2.5.71 version. for example, in two files the hostno parameter was not dropped, resulting in a function that expected too many arguments. this problem was fixed in linux 2.6.0, which was released 6 months later.
+
+
+
+influences. the design of smpl was influenced by a number of sources. foremost among these is our target domain, the world of linux device drivers. linux programmers manipulate patches extensively, have designed various tools around them, and use its syntax informally in e-mail to describe software evolutions. this has encouraged us to consider the patch syntax as a valid alternative to classical rewriting systems. other influences include the structured search and replace(ssr) facility of the idea development environment from jetbrains, which allows specifying patterns using metavariables and provides some isomorphisms, and the work of de volder on jquery, which uses prolog logic variables in a system for browsing source code. finally, we were inspired to base the semantics of smpl on control-flow graphs rather than abstract syntax trees by the work of lacey and de moor on formally specifying compiler optimizations.
+
+
+
+coady et al. have used aspect-oriented programming(aop) to extend os code with new features[2,5]. nevertheless, aop is targeted towards modularizing concerns rather than integrating them into a monolithic source code. in the case of collateral evolutions, our observations suggest that linux developers favor approaches that update the source code, resulting in uniformity among driver implementations. for example, on occasion, wrapper functions have been introduced to allow code respecting both old and new versions of an interface to coexist, but these wrapper functions have typically been removed after a few versions, when a concerted effort has been made to update the code to respect the new version of the interface.
+
+
+
+the linux community has recently begun using various tools to better analyze c code. sparse is a library that, like a compiler front end, provides convenient access to the abstract syntax tree and typing information of a c program. this library has been used to implement some static analyses targeting bug detection, building on annotations added to variable declarations, in the spirit of the familiar static and const. smatch is a similar project and enables a programmer to write perl scripts to analyze c code. both projects were inspired by the work of engler et al. on automated bug finding in operating systems code. these examples show that the linux community is open to the use of automated tools to improve code quality, particularly when these tools build on the traditional areas of expertise of linux developers.
+
+
+
+this language is based on the patch syntax familiar to linux developers, but enables transformations to be expressed in a more general form. the use of isomorphisms in particular allows a concise representation of a transformation that can nevertheless accommodate multiple programming styles. smpl furthermore addresses all of the elements of the taxonomy of the kinds of collateral evolutions in linux device drivers identified in our previous work.
+
+
+
+the grammar uses some rules where the left-hand side is in all capital letters. these are macros, which take one or more grammar rule right-hand-sides as arguments. the grammar also uses some unspecified nonterminals, such as id, const, etc. these refer to the sets suggested by the name, i.e., id refers to the set of possible c-language identifiers, while const refers to the set of possible c-language constants.
+
+
+
+the grammar of the transformation is not actually the grammar of the smpl code that can be written by the programmer, but the grammar of the slice of this consisting of theannotated and the unannotated code(the context of the transformed lines), or the+ annotated code and the unannotated code. for example, for parsing purposes, the transformation presented in section 4.5 is split into the two variants shown below and each is parsed separately.
+
+
+
+or is a macro that generates a disjunction of patterns. the tokens(,|, and) must appear in the leftmost column, to differentiate them from the parentheses and bit-or tokens that can appear within expressions(and cannot appear in the leftmost column). these tokens are furthermore different from(,|, and), which are part of the grammar metalanguage.
+
+
+

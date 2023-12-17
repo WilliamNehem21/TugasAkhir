@@ -1,0 +1,92 @@
+transient faults that arise in large-scale software systems can often be repaired by re-executing the code in which they occur. ascribing a meaningful semantics for safe re-execution in multi-threaded code is not obvious, however. for a thread to correctly re-execute a region of code, it must ensure that all other threads which have witnessed its unwanted effects within that region are also reverted to a meaningful earlier state. if not done properly, data inconsistencies and other undesirable behavior may result. however, automatically determining what constitutes a consistent global checkpoint is not straightforward since thread interactions are a dynamic property of the program.
+
+
+
+in this paper, we present a safe and efficient checkpointing mechanism for concurrent ml(cml) that can be used to recover from transient faults. we introduce a new linguistic abstraction called stabilizers that permits the specification of per-thread monitors and the restoration of globally consistent checkpoints. global states are computed through lightweight monitoring of communication events among threads(e.g. message-passing operations or updates to shared variables). our checkpointing abstraction provides atomicity and isolation
+
+
+
+a simple solution to transient fault recovery would be to capture the global state of the program before an action executes that could trigger such a fault. if the fault occurs and raises an exception, the handler only needs to restore the previously saved program state. unfortunately, transient faults often occur in long-running server applications that are inherently multi-threaded but which must nonetheless exhibit good fault tolerance characteristics; capturing global program state is costly in these environments. on the other hand, simply re-executing a computation without taking prior thread interactions into account can result in an inconsistent program state and lead to further errors, such as serializability violations. when a thread is reverted all of its effects must be isolated from the rest of the program.
+
+
+
+to alleviate the burden of defining and restoring safe and efficient checkpoints in concurrent functional programs, we propose a new language abstraction called stabilizers. stabilizers encapsulate two operations. the first initiates monitoring of code for communication and thread creation events, and establishes thread-local checkpoints when monitored code is evaluated. this thread-local checkpoint can be viewed as a restoration point for any transient fault encountered during the execution of the monitored region. the second operation reverts control and state to a safe global checkpoint when a transient fault is detected. when control is reverted atomicity and isolation of the monitored region are enforced. the monitored region is unrolled atomically and all of its global effects are also reverted.
+
+
+
+the checkpoints defined by stabilizers are first-class and composable: a monitored procedure can freely create and return other monitored procedures. stabilizers can be arbitrarily nested, and work in the presence of a dynamically-varying number of threads and non-deterministic selective communication. we demonstrate the use of stabilizers for several large server applications written in concurrent ml and we provide a case study describing how to extend stabilizers into transactions by providing atomicity and isolation guarantees during the execution of monitored code.
+
+
+
+stabilizers provide a middle ground between the transparency afforded by operating systems or compiler-injected checkpoints, and the precision afforded by userinjected checkpoints. in our approach, thread-local state immediately preceding a non-local action(e.g. thread communication, thread creation, etc.) is regarded as a possible checkpoint for that thread. in addition, applications may explicitly identify program points where local checkpoints should be taken, and can associate program regions with these specified points. when a rollback operation occurs, control reverts to one of these saved checkpoints for each thread. rollbacks are initiated to recover from transient faults. the exact set of checkpoints chosen is determined by safety conditions, namely that monitored code is reverted atomically and all its effects are isolated, that ensure a globally consistent state is preserved. when a thread is rolled-back to a thread-local checkpoint state c, our approach guarantees other threads with which the thread has communicated will be placed in states consistent with c.
+
+
+
+stabilizer abstraction. section 3 provides a motivating example that highlights the issues associated with transient fault recovery in a highly multi-threaded webserver, and how stabilizers can be used to alleviate complexity and improve robustness. an operational semantics is given in section 4. a strategy for incremental construction of checkpoint information is given in section 5. implementation details are provided in section 6. a detailed evaluation on the costs and overheads of using stabilizers for transient fault recovery is given in section 7, a case study showing how to implement software transactions is given in section 8, related work is presented in section 9, and conclusions are given in section 10.
+
+
+
+utility function in the file processing module. the filereader function must check in every iteration of the file processing loop whether a timeout has occurred by calling the timeout.expired function due to the restriction that cml threads cannot be explicitly interrupted. if a timeout has occurred, the procedure is obligated to notify the receiver(the hosting thread) through an explicit send on channel consumer.
+
+
+
+our implementation is incorporated within mlton, a whole-program optimizing compiler for standard ml. the main changes to the underlying infrastructure were the insertion of write barriers to track shared memory updates, and hooks to the concurrent ml library to update the communication graph. state restoration is thus a combination of restoring continuations as well as reverting references. the implementation is roughly 2k lines of code to support our data structures, checkpointing, and restoration code, as well as roughly 200 lines of changes to cml.
+
+
+
+we have thus far elided details on how to track shared memory access to properly support state restoration actions in the presence of references. naively tracking each read and write separately would be inefficient. there are two problems that must be addressed:(1) unnecessary writes should not be logged; and(2) spurious dependencies induced by reads should be avoided.
+
+
+
+a stabilize action has complexity linear in the number of nodes and edges in the graph. our implementation utilizes a combination of depth-first search and bucket sorting to calculate the resulting graph after a stabilize call in linear time. dfs identifies the part of the graph which will be removed after the stabilize call and a modified bucket sort actually performs the removal. only sections of the graph reachable from the stabilize call are traversed, resulting in a fast restoration procedure.
+
+
+
+to measure the cost of stabilizers with respect to various concurrent programming paradigms, we present a synthetic benchmark to quantify pure memory and time overheads, and examine several server-based open-source cml benchmarks to illustrate average overheads in real programs. the benchmarks were run on an intel p4 2.4 ghz machine with one gbyte of memory running gentoo linux, compiled and executed using mlton release 20041109.
+
+
+
+our other benchmarks include several exene benchmarks, triangles and nbody, mostly display programs that create threads to draw objects; and pretty,a pretty printing library written on top of exene. the exene toolkit is a library for x windows, implementing the functionality of xlib, written in cml and comprising roughly 16k lines of standard ml. events from the x server and control messages between widgets are distributed in streams(coded as cml event values) through the window hierarchy. exene manages the x calls through a series of servers, dynamically spawned for each connection and screen. the last benchmark we consider is swerve, a webserver written in cml whose major modules communicate with one another using message-passing channel communication; it makes no use of exene. all the benchmarks create various cml threads to handle various events; communication occurs mainly through a combination of message-passing on channels, with occasional updates to shared data.
+
+
+
+alleviate such concerns is to allow isolation to be broken through the use of open nesting 6. in general, open nesting is a method that can be employed to facilitate the combination of transactional software with classically synchronized libraries. open nesting also has a clear use for long lived transactions, allowing them to relinquish data they may no longer be utilizing. this can allow other threads, which may have been waiting for the long lived transaction to finish, to proceed with their calculations. as an example, consider what occurs when a transaction operates on disjoint sets of memory locations in the following section.
+
+
+
+for open nesting we utilize the graph to track dependencies between open nested transactions and the rest of the program. our graph building algorithm for tracking transitive dependencies remains largely the same and allows us to track dependencies on speculatively committed data. if a speculatively committed transaction is unrolled, due to its parent being aborted, all threads which are transitively dependent upon the speculatively committed data of the child are also returned to a dynamically calculated consistent state.
+
+
+
+our implementation of transactions is similar to the welc et. al. implementation of transactions for low contention. since open nested transactions can potentially lead to cascading aborts, a low contention concurrency scheme is more appropriate than a high contention scheme. a low contention concurrency protocol scheme is based on the assumption that for a given reference, the number of reads outnumbers the number of writes.
+
+
+
+to support open nesting we must first extend our version list to also contain the value stored in the reference prior to write(as in our stabilizer implementation). this value is needed in case shared memory must be unrolled due to an abort of a speculative commit triggered by a parent transaction. in such a case all speculative writes must be unrolled. this is accomplished precisely as defined by a call to stabilize.
+
+
+
+dependencies on speculative values are monitored through our graph. therefore, the read barriers described above are extended to modify the graph by adding a dependency edge to the writer of the value read. at commit time, a transaction can check if it depends on a speculative value by consulting the graph. if there are any communication edges connecting the committing transaction to any speculative transaction, the transaction is currently dependent on speculative data. we force closed transactions to abort if they are dependent on speculative data.
+
+
+
+with open nesting it is possible to write child transactions which violate atomicity properties of their parents. consider a top level transaction which itself contains two open nested transactions which both write to a location l. no thread can witness the first open write to the location l safely, since this violates the atomicity properties of the closed parent transaction. consider what occurs when a closed parent transaction creates a new reference which is then made visible through a open nested child transaction. without open nesting, the newly created reference would remain local and isolated through the lifetime of the parent. therefore, if such a reference is made visible through the use of open nesting, it violates assumptions made by the parent transaction. synchronization of threads through open nesting is also non obvious. a thread which synchronizes with a transaction twice, through the use of open nesting, is clearly not atomic and cannot be serialized. such problems are exacerbated when transactions are made first class and dynamically composable.
+
+
+
+normal termination. stabilizers can be used for a similar goal, although the means by which this goal is achieved is quite different. stabilizers rely on unrolling thread dependencies of affected threads to ensure consistency instead of employing specific runtime mechanisms to reclaim resources.
+
+
+
+in addition to stabilizers, functional language implementations have utilized continuations for similar tasks. for example, tolmach and appel described a debugging mechanism for sml/nj that utilized captured continuations to checkpoint the target program at given time intervals. this work was later extended to support multithreading, and was used to log non-deterministic thread events to provide replay abilities.
+
+
+
+another possibility for fault recovery is micro-reboot, a fine-grained technique for surgically recovering faulty application components which relies critically on the separation of data recovery and application recovery. micro-reboot allows for a system to be restarted without ever being shut down by rebooting separate components. unlike checkpointing schemes, which attempt to restore a program to a consistent state within the running application, micro-reboot quickly restarts an application component, but the technique itself is oblivious to program semantics. the ability to revert to a prior point within a concurrent execution is essential to transaction systems[1,16,27]; outside of their role for database concurrency control, such approaches can improve parallel program performance by profitably exploiting speculative execution[32,39]. harris et al. proposes a transactional memory system for haskell that introduces a retry primitive to allow a transactional execution to safely abort and be re-executed if desired resources are unavailable. however, this work does not propose to track or revert effectful thread interactions within a transaction. in fact, such interactions are explicitly rejected by the haskell type-system. there has also been recent interest in providing transactional infrastructures for ml, and in exploring the interaction between transactional semantics and first-class synchronous operations. our work shares obvious
+
+
+
+stabilizers are a novel checkpointing abstraction for concurrent functional programs. unlike other checkpointing schemes, stabilizers are not only able to identify the smallest subset of threads which must be unrolled, but also provide useful safety guarantees. as a language abstraction, stabilizers can be used to simplify program structure especially with respect to error handling, debugging, and consistency management. our results indicate that stabilizers can be implemented with small overhead and thus serve as an effective and promising checkpointing abstraction for high-level concurrent programs. the atomicity properties provided by stabilizers on roll-back make them particularly suited for implementing other higher level abstractions such as transactions.
+
+
+

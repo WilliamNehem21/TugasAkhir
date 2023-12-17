@@ -1,0 +1,104 @@
+automatic code modification for java applications is a widely-used technique that adds functionality to existing software. aspect-oriented programming or bytecode rewriting make it trivial for programmers to implement cross-cutting concerns such as logging, error handling, or profiling without modification to original applications. more complex is the comprehensive transformation of an application; generating an entirely new program that retains the execution semantics of the original, while adding substantive new functionality.
+
+
+
+we discuss a proxy-based object model that abstracts object implementation, hiding whether they are local or remote to a given virtual machine. this model allows for objects to be distributed and migrated across the ruggedj network while still preserving the execution semantics and class hierarchy of the original application. additionally, by referring to transformed classes in rewritten bytecode only using interfaces we allow the elimination of proxies in the common case where an object is known to be always local or remote.
+
+
+
+our implementation of ruggedj is mostly complete. the bytecode transformation process is in place and tested on realistic applications running on a single node. we have distributed simple applications, but are currently working on the complete distribution of complex systems.
+
+
+
+we split classes into two parts: the fields and methods that make up per-object state(the instance parts), and those that are specific to the class(the static parts). this is necessary in order to ensure that static data exists exactly once in the ruggedj network; section 3.3 discusses this issue further.
+
+
+
+when the ruggedj class loader has rewritten a class, it presents only the transformed version for loading into the java vm. the vm never sees the original class, which removes the possibility of conflicts between modified and unmodified classes. the only exception to this is in the case of unmodifiable classes, which we describe in section 3.4.
+
+
+
+interface x: the interface contains an abstract version of each instance method present in the original application class, as well as get and set methods for each field(see section 4.2). the name of the interface is significant. by using the name of the original class, the java type system will recognize an object that implements this interface as the original class. this property simplifies the rewriting of certain bytecode structures, such as instanceof checks and exception handling, and removes the need to transform every reference to the original class. the local, stub and proxy classes each implement the interface, and rewritten code refers to a class primarily via its rewritten interface.
+
+
+
+class x stub: the stub class represents a remote object(i.e., one for which a local version exists on a different node). the stub contains a globally-unique identifier of the remote object, and it implements each method of the interface as a remote method invocation.
+
+
+
+where the original application allocates an object of type x, the transformed version creates a pair of objects. one is either an x local or x stub, depending on the node upon which the allocation occurs. the other is an x proxy object that references the local or stub object. by referring to proxies rather than local or stub object in rewritten code, ruggedj ensures that only a single pointer exists to a local or stub object on a given node. this allows objects to migrate easily from node to node: should an object move from the local node, it is necessary only to
+
+
+
+the design of the object model, however, does allow for the direct allocation of local or stub objects, bypassing the proxy. this is desirable for objects that are known never to migrate, such as those objects directly tied to the local virtual machine(such as file handles, class objects, and so forth), or objects known by the author of the partitioning strategy to exist on only one machine(such as temporary objects or local data structures). allocating proxies for such objects would be unnecessary, adding the overhead of indirection when the referenced object is never going to change. in these cases, ruggedj instead simply allocates either the local or stub object.
+
+
+
+we can use x proxy, x local, and x stub objects interchangeably in this manner because each implements the generated interface x. we make all method calls within rewritten code in terms of the interface, and field accesses go through the generated get and set methods. by calling methods through interfaces, we minimize the transformation necessary on calling code, while maximizing flexibility in the types of objects used.
+
+
+
+part of class x. this is not necessary to preserve the inheritance relationships of the original application. other than when allocating objects, rewritten code never refers to these individual classes. rather, this subclassing works to simplify the implementation of these classes. without it, each class would have to contain the fields and implementations for every method of the superclasses of its unmodified version, which would lead to duplication of code and overly-complex classes.
+
+
+
+interface x static: this interface contains each static method and get/set methods for each static field in the original class. it functions similarly to the instance interface x. both x static local and x static stub classes implement x static, allowing rewritten code to use them interchangeably.
+
+
+
+transforming static methods of original class x into instance members of class x static local serves two purposes. first, it allows the static part of an object to be treated as any other object in the ruggedj network. this allows us to take advantage of any object migration or caching performed by the system for static data as well as individual objects. more importantly, however, is the fact that transforming static data to representation as an object allows us to ensure that only one copy of the data exists in the network. were static fields left unmodified, each vm that loads class x would have its own copy of each field, leading to inconsistent data.
+
+
+
+since we do not transform unmodifiable classes, we cannot distribute them. in practice, we find that the majority of unmodifiable classes exist within the java standard libraries, and are often closely tied to the underlying vm. this does not prove to be a great obstacle to the distribution of an application, since such classes would not move in any case. however, it is necessary that remote nodes be able to reference instances of unmodifiable classes. to this end, we generate wrappers for unmodifiable classes.
+
+
+
+class gen.z static local acts as a static singleton for the wrapped class, with one important difference. since an unmodifiable class may directly access static members, we cannot rewrite such static data to form instance methods of gen.z static local. thus, the methods of the static local class instead simply delegate to the original class. to ensure uniqueness in static data, a given unmodifiable class can thus access static data only on a single node. while this limits the
+
+
+
+we generate a set of interfaces and classes for every pair of array content and dimensionality used in the application. the interface contains get and set methods for the array content, as well as methods to perform standard operations such as getting the length or hash value for the array. class array of y 1 local is a wrapper for a one-dimensional array of y objects(the contents of which are themselves instances of local, stub, or proxy classes that implement interface y). array classes do not need static singletons, since arrays maintain no static state.
+
+
+
+of the classes we generate for a given application class, only the local and static local versions contain copied bytecode. we generate all other classes from scratch. thus, we apply the following transformations only to the bodies of local and static local classes.
+
+
+
+we need a more complicated rewrite in the case of invokespecial bytecodes, used to call private methods, constructors, or superclass methods. we can call private methods in the same way as regular methods(for the sake of simplicity, we modify all methods to be public; the original java compilation enforced the access controls). however, we cannot call constructors or superclass methods through an interface. we must invoke a constructor upon the appropriate class; we describe this process in section 4.4. superclass invocations must specify the superclass type upon which to invoke a method(in case a subclass has overridden the method). this does not present a problem since we knot that the code we are modifying is within a local class, the superclass of which we also know.
+
+
+
+instance field accesses: we must rewrite accesses to instance fields, since direct access to a field assumes that an object is local. to this end, we replace every instance field access by a call to the appropriate get or set method in the interface. this policy obviously adds an unnecessary level of indirection when the accessed field belongs to the accessing object. a more subtle problem exists, however, that necessitates special handling of such accesses. under the java vm specification, the only operation that may occur in a constructor before the invocation of a superclass constructor is the initialization of a field in the local object. rewriting such a field invocation to a method call would cause a verification error, since a method call cannot precede the superclass constructor call. we can detect cases where a field access occurs on the accessing object using a simple flow analysis, as we describe in
+
+
+
+static method bodies: as we discussed in section 3.3, we transform static fields and methods within the static local class to be members of the static singleton object. while transforming fields is straightforward, we must rewrite static method bodies to function as instance methods. the first local variable slot in an instance method is reserved for the this pointer, referring to the object upon which the method is invoked. static methods are not invoked on any object, and so do not have a this pointer. thus, when converting a static method to an instance method we must to update all local variable references to allow for the new reference.
+
+
+
+the object allocation process involves interaction between the rewritten bytecode in a method and the partitioning strategy defined by the application author. it is the primary means by which one distributes an application. by strategically allocating objects on remote nodes and remotely invoking methods, one can perform large computations across a collection of nodes.
+
+
+
+allocate remotely: on the other hand, a policy may sometimes know that we should always allocate an object on a different node. this may be the case if the partitioning strategy dictates to spread objects of a certain across the network for load balancing purposes, or that a particular class would benefit from a resource that is not available on the local host. this option allocates both a proxy and a stub object, and determines at run-time on which node to allocate the object.
+
+
+
+allocate dynamically: finally, there are cases where we will not know the best allocation node for an object until run time. this may be the case if we should evenly distribute the objects of a class over the network: the location of the object will depend on the run-time distribution pattern. this option defers the decision of whether to allocate a local or stub class until run time.
+
+
+
+the first concerns operations on arrays. as discussed in section 3.5, we replace all arrays in a ruggedj network with wrapping objects. this presents problems during the rewriting phase since, unlike most bytecodes that operate over references, array operations(aaload, aastore, arraylength, etc) do not encode type information. one can determine the type of the array reference and return value only by modeling the run-time stack. since we rewrite these bytecodes to standard invokeinterface method calls, we need to know both the type and dimensionality of the array upon which to invoke the method. we find this information using a a
+
+
+
+this analysis is, by its nature, conservative. it can produce a false negative when, for example, code passes a reference to a method that then returns something of the same type. the return value could be the original reference or a different object. this conservatism is not a problem since we employ the analysis mostly for optimization, so missing a reference does not violate correctness. the only occasion where we rely on this analysis is where a field initialization occurs prior to the super-constructor call in a constructor. however, since the only field initializations that may occur before that call are to the local object, the analysis will always be accurate in this case.
+
+
+
+as with most large-scale automatic application transformation systems, ruggedj cannot guarantee correctness in all cases. there are certain corner cases where an adversarial programmer can foil the rewriting system into producing incorrect results. however, we are confident that such cases are rare under normal circumstances.
+
+
+
