@@ -11,7 +11,7 @@ def index(request):
     print(request.method)
     if (request.method == "POST"):
         time.sleep(5)
-        return render(request, 'Home/output.html')
+        return render(request, 'Home/paraphrased.html')
     else:
         return render(request, 'Home/base.html', context)
 
