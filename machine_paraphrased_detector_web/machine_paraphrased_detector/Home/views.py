@@ -24,8 +24,11 @@ def predict(request):
     text = request.POST['text']
     
     predict_model = Predict(text)
-    predicted = predict_model.predict()
-    if predicted[0] == 0:
+    predicted, similarity = predict_model.predict()
+    if predicted == 0:
         return render(request, 'Home/notParaphrased.html')
     else:
-        return render(request, 'Home/paraphrased.html')
+        context = {
+            'similarity' : similarity,
+        }
+        return render(request, 'Home/paraphrased.html', context)
