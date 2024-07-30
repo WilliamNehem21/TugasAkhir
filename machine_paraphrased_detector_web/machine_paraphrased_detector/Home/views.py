@@ -1,34 +1,45 @@
+# import library dan class
 from django.shortcuts import render
-from .forms import HomeInput
 import time
-import pickle
 from .predict import Predict
+import re
 
-# Create your views here.
+# method untuk menampilkan request halaman
 def index(request):
-    home_input = HomeInput()
-    context = {
-        'home_input' : home_input,
-    }
-    print(request.method)
+    # jika request dari pemanggilan method ada POST (ada submit form)
     if (request.method == "POST"):
-        time.sleep(5)
-        return predict(request)
-    else:
-        return render(request, 'Home/base.html', context)
+            
+            # melakukan sleep agar dapat menampilkan pop up bahwa input sedang di proses
+            time.sleep(3)
 
-def output(request):
-    return render(request, 'Home/output.html')
+            # memanggil method predict untuk menampilkan hasil prediksi
+            return predict(request)
+    else: # jika request dari pemanggilan method bukan POST (tidak submit form)
+        # menampilkan halaman utama
+        return render(request, 'Home/base.html')
 
+
+# method untuk melakukan prediksi dan menampilkan halaman hasil prediksi
 def predict(request):
+    # mengambil data input dari request
     text = request.POST['text']
-    
+
+    # membuat object dari kelas Predict
     predict_model = Predict(text)
-    predicted, similarity = predict_model.predict()
+
+    # melakukan prediksi
+    predicted, similarity, file_name = predict_model.predict()
+
+    # jika hasil prediksi menyatakan bahwa input bukan hasil machine paraphrased essay
     if predicted == 0:
+        # menampilkan halaman prediksi bahwa input bukan hasil machine paraphrased essay
         return render(request, 'Home/notParaphrased.html')
-    else:
+    else: # jika hasil prediksi menyatakan bahwa input adalah hasil machine paraphrased essay
+        # membuat dictionary yang berisi kesamaan input dengan dokumen yang ada di basis data
         context = {
             'similarity' : similarity,
+            'file_name' : file_name,
         }
+        # menampilkan halaman prediksi bahwa input adalah hasil machine paraphrased essay
         return render(request, 'Home/paraphrased.html', context)
+    
